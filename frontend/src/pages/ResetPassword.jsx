@@ -1,65 +1,100 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { ArrowRight, CheckCircle2 } from "lucide-react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { CheckCircle2 } from "lucide-react";
 import AuthLayout from "../components/AuthLayout";
 import InputField from "../components/InputField";
+import { authApi } from "../services/authApi";
 
 export default function ResetPassword() {
-  const { token } = useParams(); // récupéré depuis le lien reçu par email
+  const { token } = useParams();
+  const navigate = useNavigate();
   const [form, setForm] = useState({ password: "", confirmPassword: "" });
   const [errors, setErrors] = useState({});
+  const [serverError, setServerError] = useState("");
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
     setErrors({ ...errors, [e.target.name]: undefined });
+    setServerError("");
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+
     const err = {};
     if (form.password.length < 8) err.password = "8 caractères minimum";
+    else if (!/[A-Z]/.test(form.password)) err.password = "Au moins une majuscule";
     if (form.confirmPassword !== form.password)
       err.confirmPassword = "Les mots de passe ne correspondent pas";
     setErrors(err);
     if (Object.keys(err).length > 0) return;
 
     setLoading(true);
-    // TODO : brancher l'API  POST /api/auth/reset-password/:token  { password }
-    console.log("Réinitialisation :", { token, password: form.password });
-    setTimeout(() => {
-      setLoading(false);
+    setServerError("");
+    try {
+      await authApi.resetPassword(token, form.password);
       setDone(true);
-    }, 800);
+      setTimeout(() => navigate("/login"), 3000);
+    } catch (e) {
+      setServerError(e.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (done) {
     return (
-      <AuthLayout title="Mot de passe modifié" subtitle="Vous pouvez maintenant vous reconnecter.">
-        <div className="rounded-2xl bg-white p-6 text-center shadow-sm">
-          <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-brand-100 text-brand-700">
-            <CheckCircle2 size={28} />
-          </span>
-          <p className="mt-4 text-sm leading-relaxed text-brand-900/70">
-            Votre mot de passe a bien été mis à jour.
+      <AuthLayout title="Mot de passe modifié" subtitle="Tout est en ordre">
+        <div className="flex flex-col items-center rounded-2xl bg-brand-50 p-8 text-center">
+          <CheckCircle2 size={44} className="text-brand-600" />
+          <p className="mt-4 text-sm text-brand-900/75">
+            Votre mot de passe a été réinitialisé. Vous allez être redirigé vers la connexion.
           </p>
         </div>
         <Link to="/login" className="btn-primary mt-6 w-full">
-          Se connecter <ArrowRight size={16} />
+          Se connecter
         </Link>
       </AuthLayout>
     );
   }
 
   return (
-    <AuthLayout title="Nouveau mot de passe" subtitle="Choisissez un mot de passe d'au moins 8 caractères.">
+    <AuthLayout title="Nouveau mot de passe" subtitle="Choisissez un mot de passe sécurisé">
       <form onSubmit={handleSubmit} noValidate className="space-y-5">
-        <InputField label="Nouveau mot de passe" name="password" type="password" value={form.password} onChange={handleChange} error={errors.password} placeholder="8 caractères min." autoComplete="new-password" />
-        <InputField label="Confirmer le mot de passe" name="confirmPassword" type="password" value={form.confirmPassword} onChange={handleChange} error={errors.confirmPassword} placeholder="Répéter le mot de passe" autoComplete="new-password" />
+        <InputField
+          label="Nouveau mot de passe"
+          name="password"
+          type="password"
+          value={form.password}
+          onChange={handleChange}
+          error={errors.password}
+          placeholder="8 car. min. + 1 majuscule"
+          autoComplete="new-password"
+        />
+        <InputField
+          label="Confirmer le mot de passe"
+          name="confirmPassword"
+          type="password"
+          value={form.confirmPassword}
+          onChange={handleChange}
+          error={errors.confirmPassword}
+          placeholder="Répéter le mot de passe"
+          autoComplete="new-password"
+        />
+
+        {serverError && (
+          <div className="rounded-xl bg-coral-soft px-4 py-3 text-sm font-medium text-coral">
+            {serverError}
+            <Link to="/forgot-password" className="mt-1 block font-semibold underline">
+              Demander un nouveau lien
+            </Link>
+          </div>
+        )}
 
         <button type="submit" disabled={loading} className="btn-primary w-full">
-          {loading ? "Enregistrement…" : "Enregistrer le mot de passe"}
+          {loading ? "Enregistrement…" : "Réinitialiser le mot de passe"}
         </button>
       </form>
     </AuthLayout>

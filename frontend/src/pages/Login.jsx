@@ -58,16 +58,23 @@ export default function Login() {
           placeholder="exemple@email.com"
           autoComplete="email"
         />
-        <InputField
-          label="Mot de passe"
-          name="password"
-          type="password"
-          value={form.password}
-          onChange={handleChange}
-          error={errors.password}
-          placeholder="Votre mot de passe"
-          autoComplete="current-password"
-        />
+        <div>
+          <InputField
+            label="Mot de passe"
+            name="password"
+            type="password"
+            value={form.password}
+            onChange={handleChange}
+            error={errors.password}
+            placeholder="Votre mot de passe"
+            autoComplete="current-password"
+          />
+          <div className="mt-2 text-right">
+            <Link to="/forgot-password" className="text-sm font-semibold text-brand-700 hover:underline">
+              Mot de passe oublié ?
+            </Link>
+          </div>
+        </div>
 
         {serverError && (
           <p className="rounded-xl bg-coral-soft px-4 py-3 text-sm font-medium text-coral">{serverError}</p>
