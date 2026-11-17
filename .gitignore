@@ -26,3 +26,15 @@ Desktop.ini
 
 # Test coverage
 coverage/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Modèles IA (trop lourds pour GitHub)
+ai-service/models/*.pt
+
+# Fichiers envoyés par les utilisateurs
+backend/uploads/

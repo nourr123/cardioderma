@@ -37,7 +37,7 @@ export default function Login() {
       localStorage.setItem("token", token);
       localStorage.setItem("user", JSON.stringify(user));
 
-      navigate(user.role === "admin" ? "/admin" : "/");
+      navigate(user.role === "admin" ? "/admin" : "/espace");
     } catch (e) {
       setServerError(e.message);
     } finally {
