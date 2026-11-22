@@ -1,16 +1,18 @@
-import axios from "axios";
-
-const AI_URL = import.meta.env.VITE_AI_URL || "http://127.0.0.1:8000";
+const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:5000/api";
 
 export const dermaApi = {
   async analyze(file) {
-    const formData = new FormData();
-    formData.append("file", file);
-    const { data } = await axios.post(`${AI_URL}/predict`, formData);
+    const body = new FormData();
+    body.append("image", file);
+
+    const res = await fetch(`${API_URL}/derma/analyze`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      body, // pas de Content-Type : le navigateur gère le multipart
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || "Erreur lors de l'analyse");
     return data;
-  },
-  // alias au cas où SkinAnalysis.jsx appelle predict()
-  async predict(file) {
-    return this.analyze(file);
   },
 };

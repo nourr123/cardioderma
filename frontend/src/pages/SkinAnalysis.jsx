@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -20,6 +20,7 @@ const cleanLabel = (s) =>
   s.replace(/_/g, " ").replace(/\s*photos?\s*$/i, "").trim();
 
 export default function SkinAnalysis() {
+  const navigate = useNavigate();
   const inputRef = useRef(null);
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -27,6 +28,7 @@ export default function SkinAnalysis() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
+  const [consultError, setConsultError] = useState("");
 
   // libère l'URL de prévisualisation
   useEffect(() => () => preview && URL.revokeObjectURL(preview), [preview]);
@@ -36,6 +38,7 @@ export default function SkinAnalysis() {
     if (!ALLOWED.includes(f.type)) return setError("Format non supporté (JPG, PNG ou WEBP).");
     if (f.size > MAX_SIZE) return setError("L'image dépasse 5 Mo.");
     setError("");
+    setConsultError("");
     setResult(null);
     setFile(f);
     setPreview(URL.createObjectURL(f));
@@ -46,12 +49,14 @@ export default function SkinAnalysis() {
     setPreview(null);
     setResult(null);
     setError("");
+    setConsultError("");
     if (inputRef.current) inputRef.current.value = "";
   };
 
   const analyze = async () => {
     setLoading(true);
     setError("");
+    setConsultError("");
     try {
       setResult(await dermaApi.analyze(file));
     } catch (e) {
@@ -62,6 +67,19 @@ export default function SkinAnalysis() {
   };
 
   const needsDoctor = result?.recommendation === "consultation";
+
+  // Le jeton d'orientation est délivré par le serveur : il prouve que l'IA a recommandé un avis médical
+  const consultDoctor = () => {
+    if (!result?.referralToken) {
+      setConsultError(
+        "Autorisation de consultation indisponible. Relancez l'analyse ; si le problème continue, redémarrez le serveur."
+      );
+      return;
+    }
+    navigate("/consultation/medecin", {
+      state: { referralToken: result.referralToken, analysis: result },
+    });
+  };
 
   return (
     <div>
@@ -180,11 +198,18 @@ export default function SkinAnalysis() {
                   ))}
                 </ul>
 
+                {/* Toujours affiché quand l'IA recommande un avis médical */}
                 {needsDoctor && (
-                  // TODO : lier à votre future page de consultation / messagerie
-                  <button className="btn-primary mt-6 w-full">
-                    <Stethoscope size={16} /> Consulter un médecin
-                  </button>
+                  <>
+                    <button onClick={consultDoctor} className="btn-primary mt-6 w-full">
+                      <Stethoscope size={16} /> Consulter un médecin
+                    </button>
+                    {consultError && (
+                      <p className="mt-3 rounded-xl bg-coral-soft px-4 py-3 text-sm font-medium text-coral">
+                        {consultError}
+                      </p>
+                    )}
+                  </>
                 )}
 
                 <p className="mt-5 text-xs leading-relaxed text-brand-900/50">

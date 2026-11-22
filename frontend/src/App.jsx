@@ -10,6 +10,8 @@ import PatientRoute from "./components/PatientRoute";
 import PatientSpace from "./pages/PatientSpace";
 import SkinAnalysis from "./pages/SkinAnalysis";
 import Profile from "./pages/Profile";
+import ChooseDoctor from "./pages/ChooseDoctor";
+import Messages from "./pages/Messages";
 
 
 export default function App() {
@@ -25,6 +27,9 @@ export default function App() {
       <Route path="/espace" element={<PatientRoute><PatientSpace /></PatientRoute>} />
       <Route path="/dermatologie" element={<PatientRoute><SkinAnalysis /></PatientRoute>} />
       <Route path="/profil" element={<Profile />} />
+      <Route path="/consultation/medecin" element={<PatientRoute><ChooseDoctor /></PatientRoute>} />
+      <Route path="/messages" element={<PatientRoute><Messages /></PatientRoute>} />
+      <Route path="/messages/:id" element={<PatientRoute><Messages /></PatientRoute>} />
     </Routes>
   );
 }

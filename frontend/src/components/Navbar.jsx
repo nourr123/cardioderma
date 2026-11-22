@@ -1,14 +1,41 @@
-import { Link, useNavigate } from "react-router-dom";
-import { LogOut, UserCog } from "lucide-react";
+import { Link, NavLink, useNavigate } from "react-router-dom";
+import { LayoutGrid, LogOut, MessageSquare, UserCog } from "lucide-react";
 import Logo from "./Logo";
+import { disconnectSocket } from "../services/socket";
+
+const readUser = () => {
+  try {
+    return JSON.parse(localStorage.getItem("user") || "null");
+  } catch {
+    return null;
+  }
+};
+
+// Bouton de navigation : surligné quand on est sur la page correspondante
+function NavItem({ to, icon: Icon, children }) {
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) =>
+        `inline-flex items-center gap-2 rounded-full px-3.5 py-2 text-sm font-semibold transition sm:px-4 ${
+          isActive ? "bg-brand-100 text-brand-800" : "text-brand-900 hover:bg-brand-900/5"
+        }`
+      }
+    >
+      <Icon size={16} />
+      <span className="hidden sm:inline">{children}</span>
+    </NavLink>
+  );
+}
 
 export default function Navbar() {
   const navigate = useNavigate();
-  const isLoggedIn = Boolean(
-    localStorage.getItem("token") || localStorage.getItem("user")
-  );
+  const user = readUser();
+  const isLoggedIn = Boolean(localStorage.getItem("token") || user);
+  const isDoctor = user?.role === "medecin";
 
   const logout = () => {
+    disconnectSocket();
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     navigate("/");
@@ -20,22 +47,31 @@ export default function Navbar() {
         <Logo />
 
         {isLoggedIn ? (
-          <div className="flex items-center gap-1">
-            <Link
-              to="/profil"
-              className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-brand-900 transition hover:bg-brand-900/5"
-            >
-              <UserCog size={16} />
+          <nav className="flex items-center gap-1.5">
+            {/* Le patient a un espace (Cardio / Dermatologie) ; le médecin arrive directement sur sa messagerie */}
+            {!isDoctor && (
+              <NavItem to="/espace" icon={LayoutGrid}>
+                Mon espace
+              </NavItem>
+            )}
+            <NavItem to="/messages" icon={MessageSquare}>
+              Messages
+            </NavItem>
+            <NavItem to="/profil" icon={UserCog}>
               Modifier mon profil
-            </Link>
+            </NavItem>
+
+            <span className="mx-1 h-6 w-px bg-brand-900/10" aria-hidden="true" />
+
             <button
               onClick={logout}
-              className="inline-flex items-center gap-2 rounded-full bg-brand-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-800"
+              className="inline-flex items-center gap-2 rounded-full bg-brand-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-800 sm:px-5"
+              aria-label="Déconnexion"
             >
               <LogOut size={16} />
-              Déconnexion
+              <span className="hidden sm:inline">Déconnexion</span>
             </button>
-          </div>
+          </nav>
         ) : (
           <>
             <nav className="hidden items-center gap-8 text-sm font-medium text-brand-900/75 md:flex">
