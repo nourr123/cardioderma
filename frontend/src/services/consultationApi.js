@@ -49,4 +49,20 @@ export const consultationApi = {
   async markRead(id) {
     await request(`/${id}/read`, { method: "PATCH" });
   },
+
+  // Avis médical (médecin) : { verdict: "confirme" | "nuance" | "infirme", commentaire, recommandations }
+  async postOpinion(id, body) {
+    return (await request(`/${id}/opinions`, { method: "POST", body: JSON.stringify(body) })).message;
+  },
+
+  // Rendez-vous de la conversation
+  async listAppointments(id) {
+    return (await request(`/${id}/appointments`)).appointments;
+  },
+
+  // body : { startsAt (ISO), durationMin, note } -> { appointment, message }
+  async createAppointment(id, body) {
+    const data = await request(`/${id}/appointments`, { method: "POST", body: JSON.stringify(body) });
+    return { appointment: data.appointment, message: data.message };
+  },
 };

@@ -2,6 +2,7 @@ const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
 const User = require("../models/user");
 const service = require("../services/consultation.service");
+const { emitMessage } = require("../utils/realtime");
 
 const initSocket = (httpServer) => {
   const io = new Server(httpServer, {
@@ -45,14 +46,7 @@ const initSocket = (httpServer) => {
         const { conversationId, text } = payload || {};
         const result = await service.postMessage(user, conversationId, text);
 
-        io.to(`user:${result.patientId}`).emit("message:new", {
-          message: result.message,
-          conversation: result.forPatient,
-        });
-        io.to(`user:${result.medecinId}`).emit("message:new", {
-          message: result.message,
-          conversation: result.forMedecin,
-        });
+        emitMessage(io, result);
 
         reply({ ok: true, message: result.message });
       } catch (err) {

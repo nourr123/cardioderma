@@ -12,7 +12,9 @@ import SkinAnalysis from "./pages/SkinAnalysis";
 import Profile from "./pages/Profile";
 import ChooseDoctor from "./pages/ChooseDoctor";
 import Messages from "./pages/Messages";
-
+import Appointments from "./pages/Appointments";
+import AnalysisHistory from "./pages/AnalysisHistory";
+import AuthRoute from "./components/AuthRoute";
 
 export default function App() {
   return (
@@ -28,8 +30,10 @@ export default function App() {
       <Route path="/dermatologie" element={<PatientRoute><SkinAnalysis /></PatientRoute>} />
       <Route path="/profil" element={<Profile />} />
       <Route path="/consultation/medecin" element={<PatientRoute><ChooseDoctor /></PatientRoute>} />
-      <Route path="/messages" element={<PatientRoute><Messages /></PatientRoute>} />
-      <Route path="/messages/:id" element={<PatientRoute><Messages /></PatientRoute>} />
+      <Route path="/messages" element={<AuthRoute><Messages /></AuthRoute>} />
+      <Route path="/messages/:id" element={<AuthRoute><Messages /></AuthRoute>} />
+      <Route path="/rendez-vous" element={<AuthRoute><Appointments /></AuthRoute>} />    
+        <Route path="/dermatologie/historique" element={<PatientRoute><AnalysisHistory /></PatientRoute>} />
     </Routes>
   );
 }

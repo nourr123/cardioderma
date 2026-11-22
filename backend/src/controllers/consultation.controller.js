@@ -1,4 +1,5 @@
 const service = require("../services/consultation.service");
+const { emitMessage } = require("../utils/realtime");
 
 const listMedecins = async (req, res) => {
   const medecins = await service.listMedecins();
@@ -51,9 +52,16 @@ const listMessages = async (req, res) => {
   res.json({ success: true, messages });
 };
 
+// Avis médical du médecin : diffusé en direct au patient ET renvoyé au médecin
+const postOpinion = async (req, res) => {
+  const result = await service.postOpinion(req.user, req.params.id, req.body);
+  emitMessage(req.app.get("io"), result);
+  res.status(201).json({ success: true, message: result.message });
+};
+
 const markRead = async (req, res) => {
   await service.markRead(req.user, req.params.id);
   res.json({ success: true });
 };
 
-module.exports = { listMedecins, create, getImage, list, getOne, listMessages, markRead };
+module.exports = { listMedecins, create, getImage, list, getOne, listMessages, postOpinion, markRead };

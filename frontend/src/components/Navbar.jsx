@@ -1,5 +1,5 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
-import { LayoutGrid, LogOut, MessageSquare, UserCog } from "lucide-react";
+import { CalendarDays, LayoutGrid, LogOut, MessageSquare, UserCog } from "lucide-react";
 import Logo from "./Logo";
 import { disconnectSocket } from "../services/socket";
 
@@ -17,13 +17,13 @@ function NavItem({ to, icon: Icon, children }) {
     <NavLink
       to={to}
       className={({ isActive }) =>
-        `inline-flex items-center gap-2 rounded-full px-3.5 py-2 text-sm font-semibold transition sm:px-4 ${
+        `inline-flex items-center gap-2 rounded-full whitespace-nowrap px-3.5 py-2 text-sm font-semibold transition lg:px-4 ${
           isActive ? "bg-brand-100 text-brand-800" : "text-brand-900 hover:bg-brand-900/5"
         }`
       }
     >
       <Icon size={16} />
-      <span className="hidden sm:inline">{children}</span>
+      <span className="hidden lg:inline">{children}</span>
     </NavLink>
   );
 }
@@ -57,6 +57,9 @@ export default function Navbar() {
             <NavItem to="/messages" icon={MessageSquare}>
               Messages
             </NavItem>
+            <NavItem to="/rendez-vous" icon={CalendarDays}>
+              Rendez-vous
+            </NavItem>
             <NavItem to="/profil" icon={UserCog}>
               Modifier mon profil
             </NavItem>
@@ -65,11 +68,11 @@ export default function Navbar() {
 
             <button
               onClick={logout}
-              className="inline-flex items-center gap-2 rounded-full bg-brand-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-800 sm:px-5"
+              className="inline-flex items-center gap-2 rounded-full bg-brand-700 whitespace-nowrap px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-800 lg:px-5"
               aria-label="Déconnexion"
             >
               <LogOut size={16} />
-              <span className="hidden sm:inline">Déconnexion</span>
+              <span className="hidden lg:inline">Déconnexion</span>
             </button>
           </nav>
         ) : (

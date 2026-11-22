@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const controller = require("../controllers/consultation.controller");
+const appointments = require("../controllers/appointment.controller");
 const { protect } = require("../middlewares/auth.middleware");
 const { authorize } = require("../middlewares/role.middleware");
 
@@ -15,6 +16,13 @@ router.get("/", controller.list);
 router.get("/:id", controller.getOne);
 router.get("/:id/messages", controller.listMessages);
 router.get("/:id/image", controller.getImage);
+
+// Avis médical (médecin uniquement : contrôlé dans le service)
+router.post("/:id/opinions", controller.postOpinion);
+
+// Rendez-vous de la conversation
+router.get("/:id/appointments", appointments.listForConversation);
+router.post("/:id/appointments", appointments.create);
 router.patch("/:id/read", controller.markRead);
 
 module.exports = router;

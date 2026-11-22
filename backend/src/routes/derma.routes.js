@@ -7,6 +7,7 @@ const axios = require("axios");
 const FormData = require("form-data");
 const jwt = require("jsonwebtoken");
 const { protect } = require("../middlewares/auth.middleware");
+const analysisService = require("../services/analysis.service");
 
 const router = express.Router();
 
@@ -45,11 +46,13 @@ router.post("/analyze", protect, upload.single("image"), async (req, res) => {
     // ou "Pathologie nécessitant un avis médical") : on délivre un jeton signé, valable
     // 30 min, qui autorise ce patient à ouvrir une conversation avec un médecin.
     // Sans ce jeton, impossible de contacter un médecin : le client ne peut pas le falsifier.
-    console.log("[derma/analyze]", data.recommendation, "| jeton prévu :", data.recommendation === "consultation");
-    if (data.recommendation === "consultation") {
-      // La photo n'est conservée QUE dans ce cas : elle servira au médecin.
-      // Nom généré par le serveur (jamais celui du client) : pas de traversée de dossier.
-      const image = `${crypto.randomUUID()}.${EXT[req.file.mimetype]}`;
+    const consultation = data.recommendation === "consultation";
+
+    // La photo n'est conservée QUE dans ce cas : elle servira au médecin.
+    // Nom généré par le serveur (jamais celui du client) : pas de traversée de dossier.
+    let image;
+    if (consultation) {
+      image = `${crypto.randomUUID()}.${EXT[req.file.mimetype]}`;
       try {
         await fs.promises.mkdir(dermaDir, { recursive: true });
         await fs.promises.writeFile(path.join(dermaDir, image), req.file.buffer);
@@ -57,11 +60,23 @@ router.post("/analyze", protect, upload.single("image"), async (req, res) => {
         console.error("Erreur enregistrement photo :", e);
         return res.status(500).json({ message: "Impossible d'enregistrer la photo pour le médecin" });
       }
+    }
 
+    // Historique : TOUTE analyse est enregistrée (sans la photo si le cas est simple).
+    // Un échec ici ne bloque pas l'analyse : le patient reçoit quand même son résultat.
+    let analysis = null;
+    try {
+      analysis = await analysisService.createAnalysis(req.user._id, data, image);
+    } catch (e) {
+      console.error("Erreur enregistrement de l'analyse :", e);
+    }
+
+    if (consultation) {
       data.referralToken = jwt.sign(
         {
           type: "derma-referral",
           uid: String(req.user._id),
+          analysisId: analysis ? String(analysis._id) : undefined,
           prediction: data.prediction,
           confidence: data.confidence,
           reason: data.reason,
@@ -79,6 +94,12 @@ router.post("/analyze", protect, upload.single("image"), async (req, res) => {
       message: err.response?.data?.detail || "Le service d'analyse est indisponible",
     });
   }
+});
+
+// Historique des analyses du patient connecté (avec l'avis du médecin le cas échéant)
+router.get("/history", protect, async (req, res) => {
+  const analyses = await analysisService.listHistory(req.user);
+  res.json({ success: true, analyses });
 });
 
 // Erreurs multer (taille, format) renvoyées en JSON propre

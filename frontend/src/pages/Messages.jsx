@@ -1,12 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { AlertTriangle, ArrowLeft, ImageOff, MessageSquare, Send, Stethoscope, User, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CalendarPlus,
+  ImageOff,
+  MessageSquare,
+  Send,
+  Stethoscope,
+  User,
+  X,
+} from "lucide-react";
 import Navbar from "../components/Navbar";
+import OpinionCard from "../components/chat/OpinionCard";
+import OpinionModal from "../components/chat/OpinionModal";
+import AppointmentCard from "../components/chat/AppointmentCard";
+import AppointmentModal from "../components/chat/AppointmentModal";
+import { cleanLabel } from "../components/chat/format";
 import { consultationApi } from "../services/consultationApi";
+import { appointmentApi } from "../services/appointmentApi";
 import { getSocket } from "../services/socket";
-
-const cleanLabel = (s = "") =>
-  s.replace(/_/g, " ").replace(/\s*photos?\s*$/i, "").trim();
 
 const readUser = () => {
   try {
@@ -179,8 +192,23 @@ function ConversationList({ conversations, activeId, role, loading }) {
 }
 
 /* ------------------------------- Discussion (droite) ------------------------------ */
-function Chat({ conversation, role, me, messages, typing, onSend, onTyping }) {
+function Chat({
+  conversation,
+  role,
+  me,
+  messages,
+  appointments,
+  typing,
+  onSend,
+  onTyping,
+  onOpinion,
+  onCreateAppointment,
+  onAppointmentAct,
+  busyAppointment,
+}) {
   const [text, setText] = useState("");
+  const [showOpinion, setShowOpinion] = useState(false);
+  const [showAppointment, setShowAppointment] = useState(false);
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   const endRef = useRef(null);
@@ -229,6 +257,28 @@ function Chat({ conversation, role, me, messages, typing, onSend, onTyping }) {
             {typing ? <span className="font-semibold text-brand-600">écrit…</span> : role === "medecin" ? "Patient" : "Dermatologue"}
           </p>
         </div>
+
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {role === "medecin" && (
+            <button
+              type="button"
+              onClick={() => setShowOpinion(true)}
+              className="btn-primary !px-3.5 !py-2 !text-xs"
+            >
+              <Stethoscope size={14} /> <span className="hidden sm:inline">Donner mon avis</span>
+              <span className="sm:hidden">Avis</span>
+            </button>
+          )}
+          {role === "medecin" && (
+            <button
+              type="button"
+              onClick={() => setShowAppointment(true)}
+              className="btn-ghost !px-3.5 !py-2 !text-xs"
+            >
+              <CalendarPlus size={14} /> <span className="hidden sm:inline">Proposer un rendez-vous</span>
+            </button>
+          )}
+        </div>
       </header>
 
       {/* Messages */}
@@ -262,15 +312,31 @@ function Chat({ conversation, role, me, messages, typing, onSend, onTyping }) {
         )}
 
         {messages.map((m) => {
-          const mine = m.sender === me;
           const day = dayLabel(m.createdAt);
           const showDay = day !== lastDay;
           lastDay = day;
-          return (
-            <div key={m.id}>
-              {showDay && (
-                <p className="my-3 text-center text-[11px] font-semibold uppercase tracking-wide text-brand-900/35">{day}</p>
-              )}
+
+          let body;
+          if (m.type === "opinion" && m.opinion) {
+            body = <OpinionCard message={m} doctorName={displayName(conversation.medecin, "patient")} />;
+          } else if (m.type === "appointment") {
+            body = (
+              <AppointmentCard
+                appointment={appointments[m.appointmentId]}
+                role={role}
+                onAct={onAppointmentAct}
+                busy={busyAppointment?.id === m.appointmentId ? busyAppointment.action : null}
+              />
+            );
+          } else if (m.type === "system") {
+            body = (
+              <p className="mx-auto w-fit max-w-[90%] rounded-full bg-brand-100/70 px-4 py-1.5 text-center text-xs font-medium text-brand-900/70">
+                {m.text}
+              </p>
+            );
+          } else {
+            const mine = m.sender === me;
+            body = (
               <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                 <div
                   className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${
@@ -285,6 +351,15 @@ function Chat({ conversation, role, me, messages, typing, onSend, onTyping }) {
                   </p>
                 </div>
               </div>
+            );
+          }
+
+          return (
+            <div key={m.id} className="py-0.5">
+              {showDay && (
+                <p className="my-3 text-center text-[11px] font-semibold uppercase tracking-wide text-brand-900/35">{day}</p>
+              )}
+              {body}
             </div>
           );
         })}
@@ -332,6 +407,11 @@ function Chat({ conversation, role, me, messages, typing, onSend, onTyping }) {
           </button>
         </div>
       </form>
+
+      {showOpinion && <OpinionModal onClose={() => setShowOpinion(false)} onSubmit={onOpinion} />}
+      {showAppointment && (
+        <AppointmentModal role={role} onClose={() => setShowAppointment(false)} onSubmit={onCreateAppointment} />
+      )}
     </section>
   );
 }
@@ -347,6 +427,8 @@ export default function Messages() {
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [messages, setMessages] = useState([]);
+  const [appointments, setAppointments] = useState({}); // id -> rendez-vous
+  const [busyAppointment, setBusyAppointment] = useState(null);
   const [typingId, setTypingId] = useState(null);
   const [error, setError] = useState("");
 
@@ -381,6 +463,12 @@ export default function Messages() {
       .then((m) => !cancelled && setMessages(m))
       .catch((e) => !cancelled && setError(e.message));
 
+    setAppointments({});
+    consultationApi
+      .listAppointments(activeId)
+      .then((list) => !cancelled && setAppointments(Object.fromEntries(list.map((a) => [a.id, a]))))
+      .catch(() => {});
+
     consultationApi.markRead(activeId).catch(() => {});
     setConversations((prev) => prev.map((c) => (c.id === activeId ? { ...c, unread: 0 } : c)));
     return () => {
@@ -398,6 +486,15 @@ export default function Messages() {
 
       if (isActive) {
         setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
+        if (message.type === "appointment") {
+          consultationApi
+            .listAppointments(message.conversation)
+            .then((list) => {
+              if (activeRef.current === message.conversation)
+                setAppointments(Object.fromEntries(list.map((a) => [a.id, a])));
+            })
+            .catch(() => {});
+        }
         if (message.sender !== me) {
           socket.emit("conversation:read", { conversationId: message.conversation });
           conversation = { ...conversation, unread: 0 };
@@ -420,12 +517,19 @@ export default function Messages() {
       if (typing) typingTimer.current = setTimeout(() => setTypingId(null), 4000);
     };
 
+    const onAppointment = ({ appointment }) => {
+      if (appointment.conversation !== activeRef.current) return;
+      setAppointments((prev) => ({ ...prev, [appointment.id]: appointment }));
+    };
+
+    socket.on("appointment:update", onAppointment);
     socket.on("message:new", onNew);
     socket.on("conversation:new", onConversationNew);
     socket.on("typing", onTypingEvent);
     socket.on("connect", loadConversations); // resynchronise après une coupure
 
     return () => {
+      socket.off("appointment:update", onAppointment);
       socket.off("message:new", onNew);
       socket.off("conversation:new", onConversationNew);
       socket.off("typing", onTypingEvent);
@@ -442,6 +546,31 @@ export default function Messages() {
         resolve(err ? { ok: false, error: "Le serveur ne répond pas" } : res);
       });
     });
+
+  // Ajoute localement un message renvoyé par l'API (le socket le diffuse aussi : dédoublonnage par id)
+  const appendMessage = (message) =>
+    message && setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
+
+  const giveOpinion = async (body) => appendMessage(await consultationApi.postOpinion(activeId, body));
+
+  const createAppointment = async (body) => {
+    const { appointment, message } = await consultationApi.createAppointment(activeId, body);
+    setAppointments((prev) => ({ ...prev, [appointment.id]: appointment }));
+    appendMessage(message);
+  };
+
+  const actOnAppointment = async (appointmentId, action) => {
+    setBusyAppointment({ id: appointmentId, action });
+    try {
+      const { appointment, message } = await appointmentApi.act(appointmentId, action);
+      setAppointments((prev) => ({ ...prev, [appointment.id]: appointment }));
+      appendMessage(message);
+    } catch (e) {
+      window.alert(e.message);
+    } finally {
+      setBusyAppointment(null);
+    }
+  };
 
   const sendTyping = (typing) => getSocket()?.emit("typing", { conversationId: activeId, typing });
 
@@ -470,9 +599,14 @@ export default function Messages() {
                 role={role}
                 me={me}
                 messages={messages}
+                appointments={appointments}
                 typing={typingId === active.id}
                 onSend={send}
                 onTyping={sendTyping}
+                onOpinion={giveOpinion}
+                onCreateAppointment={createAppointment}
+                onAppointmentAct={actOnAppointment}
+                busyAppointment={busyAppointment}
               />
             ) : (
               <div className="flex flex-1 flex-col items-center justify-center bg-brand-50/40 px-6 text-center">

@@ -5,6 +5,7 @@ const mongoose = require("mongoose");
 const User = require("../models/user");
 const Conversation = require("../models/conversation");
 const Message = require("../models/message");
+const Analysis = require("../models/analysis");
 const ApiError = require("../utils/ApiError");
 const sendEmail = require("../utils/sendEmail");
 
@@ -39,13 +40,26 @@ const serializeConversation = (c, viewerRole) => ({
   updatedAt: c.updatedAt,
 });
 
-const serializeMessage = (m) => ({
-  id: sid(m),
-  conversation: sid(m.conversation),
-  sender: sid(m.sender),
-  text: m.text,
-  createdAt: m.createdAt,
-});
+const serializeMessage = (m) => {
+  const type = m.type || "text";
+  return {
+    id: sid(m),
+    conversation: sid(m.conversation),
+    sender: sid(m.sender),
+    type,
+    text: m.text,
+    opinion:
+      type === "opinion"
+        ? {
+            verdict: m.opinion?.verdict,
+            commentaire: m.opinion?.commentaire,
+            recommandations: m.opinion?.recommandations,
+          }
+        : undefined,
+    appointmentId: type === "appointment" && m.appointment ? sid(m.appointment) : undefined,
+    createdAt: m.createdAt,
+  };
+};
 
 /* --------------------------------- Accès ---------------------------------- */
 
@@ -120,12 +134,20 @@ const createConversation = async (patient, { medecinId, referralToken }) => {
   });
   if (!medecin) throw new ApiError(404, "Médecin introuvable ou indisponible");
 
+  // Lien vers l'analyse complète (historique) : on vérifie qu'elle appartient bien à ce patient
+  let analysisId;
+  if (isId(payload.analysisId)) {
+    const analysis = await Analysis.findOne({ _id: payload.analysisId, patient: patient._id });
+    if (analysis) analysisId = analysis._id;
+  }
+
   let conv;
   let created = true;
   try {
     conv = await Conversation.create({
       patient: patient._id,
       medecin: medecin._id,
+      analysisId,
       analysis: {
         prediction: payload.prediction,
         confidence: payload.confidence,
@@ -230,18 +252,21 @@ const listMessages = async (user, id, { before } = {}) => {
   return msgs.reverse().map(serializeMessage);
 };
 
-// Enregistre un message et retourne ce qu'il faut diffuser aux deux participants
-const postMessage = async (user, id, rawText) => {
+// Enregistre un message (de n'importe quel type) dans une conversation DÉJÀ vérifiée,
+// met à jour l'aperçu et les non-lus, et retourne ce qu'il faut diffuser aux deux participants.
+// "conv" : document de conversation dont l'utilisateur est participant.
+const createMessage = async (conv, user, { type = "text", text, opinion, appointment }) => {
   const role = roleOf(user);
   const other = role === "patient" ? "medecin" : "patient";
 
-  const text = typeof rawText === "string" ? rawText.trim() : "";
-  if (!text) throw new ApiError(400, "Le message est vide");
-  if (text.length > MAX_TEXT) throw new ApiError(400, `Message trop long (${MAX_TEXT} caractères maximum)`);
-
-  const conv = await getConversationFor(user, id, { populate: false });
-
-  const message = await Message.create({ conversation: conv._id, sender: user._id, text });
+  const message = await Message.create({
+    conversation: conv._id,
+    sender: user._id,
+    type,
+    text,
+    opinion,
+    appointment,
+  });
 
   const updated = await Conversation.findByIdAndUpdate(
     conv._id,
@@ -261,6 +286,60 @@ const postMessage = async (user, id, rawText) => {
     forPatient: serializeConversation(updated, "patient"),
     forMedecin: serializeConversation(updated, "medecin"),
   };
+};
+
+// Message écrit : le type est TOUJOURS "text" ici (un client ne peut pas se faire passer pour un avis)
+const postMessage = async (user, id, rawText) => {
+  roleOf(user);
+
+  const text = typeof rawText === "string" ? rawText.trim() : "";
+  if (!text) throw new ApiError(400, "Le message est vide");
+  if (text.length > MAX_TEXT) throw new ApiError(400, `Message trop long (${MAX_TEXT} caractères maximum)`);
+
+  const conv = await getConversationFor(user, id, { populate: false });
+  return createMessage(conv, user, { type: "text", text });
+};
+
+/* ------------------------------ Avis médical ------------------------------ */
+
+const VERDICTS = {
+  confirme: "confirme l'analyse de l'IA",
+  nuance: "nuance l'analyse de l'IA",
+  infirme: "ne confirme pas l'analyse de l'IA",
+};
+
+// Le médecin complète ou nuance le résultat de l'IA. Chaque avis est une NOUVELLE entrée
+// de la conversation : rien n'est modifié ni supprimé, l'historique est conservé.
+const postOpinion = async (user, id, body = {}) => {
+  if (user.role !== "medecin") {
+    throw new ApiError(403, "Seul le médecin peut donner un avis médical");
+  }
+
+  const { verdict } = body;
+  if (typeof verdict !== "string" || !Object.hasOwn(VERDICTS, verdict)) {
+    throw new ApiError(400, "Indiquez si vous confirmez, nuancez ou ne confirmez pas l'analyse de l'IA");
+  }
+
+  const commentaire = typeof body.commentaire === "string" ? body.commentaire.trim() : "";
+  if (!commentaire) throw new ApiError(400, "Votre avis médical est obligatoire");
+  if (commentaire.length > MAX_TEXT) throw new ApiError(400, `Avis trop long (${MAX_TEXT} caractères maximum)`);
+
+  let recommandations = "";
+  if (body.recommandations !== undefined && body.recommandations !== null) {
+    if (typeof body.recommandations !== "string") throw new ApiError(400, "Recommandations invalides");
+    recommandations = body.recommandations.trim();
+    if (recommandations.length > MAX_TEXT) {
+      throw new ApiError(400, `Recommandations trop longues (${MAX_TEXT} caractères maximum)`);
+    }
+  }
+
+  const conv = await getConversationFor(user, id, { populate: false });
+
+  return createMessage(conv, user, {
+    type: "opinion",
+    text: `Avis médical : le médecin ${VERDICTS[verdict]}`,
+    opinion: { verdict, commentaire, recommandations: recommandations || undefined },
+  });
 };
 
 const markRead = async (user, id) => {
@@ -288,7 +367,14 @@ module.exports = {
   getConversation,
   listMessages,
   postMessage,
+  postOpinion,
+  createMessage,
   markRead,
   getOtherParticipantId,
+  getConversationFor,
   serializeConversation,
+  serializeMessage,
+  roleOf,
+  isId,
+  sid,
 };

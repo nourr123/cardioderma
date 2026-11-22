@@ -12,6 +12,9 @@ const conversationSchema = new mongoose.Schema(
       reason: { type: String },
     },
 
+    // Lien vers l'analyse complète du patient (historique)
+    analysisId: { type: mongoose.Schema.Types.ObjectId, ref: "Analysis" },
+
     // Nom du fichier de la photo analysée (dossier uploads/derma), conservé avec la conversation
     image: { type: String },
 
