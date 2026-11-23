@@ -20,6 +20,9 @@ const analysisSchema = new mongoose.Schema(
 
     // Nom du fichier dans uploads/derma (uniquement si recommendation === "consultation")
     image: { type: String },
+
+    // Conversation (patient + médecin) où l'analyse a été envoyée pour avis
+    conversation: { type: mongoose.Schema.Types.ObjectId, ref: "Conversation" },
   },
   { timestamps: true }
 );

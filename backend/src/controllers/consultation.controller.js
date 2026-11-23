@@ -7,7 +7,7 @@ const listMedecins = async (req, res) => {
 };
 
 const create = async (req, res) => {
-  const { conversation: conv, created } = await service.createConversation(req.user, req.body);
+  const { conversation: conv, created, followUp } = await service.createConversation(req.user, req.body);
 
   // Notifications uniquement pour une NOUVELLE conversation (pas en cas de double clic)
   if (created) {
@@ -22,6 +22,9 @@ const create = async (req, res) => {
     // Email : en arrière-plan, la réponse au patient n'attend pas l'envoi
     service.notifyNewConversation(conv);
   }
+
+  // Nouvelle analyse dans une conversation existante : le médecin la voit en direct
+  if (followUp) emitMessage(req.app.get("io"), followUp);
 
   res.status(created ? 201 : 200).json({
     success: true,
@@ -64,4 +67,17 @@ const markRead = async (req, res) => {
   res.json({ success: true });
 };
 
-module.exports = { listMedecins, create, getImage, list, getOne, listMessages, postOpinion, markRead };
+const analysisService = require("../services/analysis.service");
+
+const patientHistory = async (req, res) => {
+  const data = await analysisService.patientHistoryForDoctor(req.user, req.params.id);
+  res.json({ success: true, ...data });
+};
+
+const patientAnalysisImage = async (req, res) => {
+  const file = await analysisService.analysisImageForDoctor(req.user, req.params.id, req.params.analysisId);
+  res.set("Cache-Control", "private, no-store");
+  res.sendFile(file);
+};
+
+module.exports = { patientHistory, patientAnalysisImage, listMedecins, create, getImage, list, getOne, listMessages, postOpinion, markRead };

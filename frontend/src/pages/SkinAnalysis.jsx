@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  History,
   ImagePlus,
   Loader2,
   RotateCcw,
@@ -85,9 +86,17 @@ export default function SkinAnalysis() {
     <div>
       <Navbar />
       <section className="mx-auto max-w-4xl px-6 py-12">
-        <Link to="/espace" className="inline-flex items-center gap-2 text-sm font-semibold text-brand-700 hover:underline">
-          <ArrowLeft size={16} /> Retour à mes espaces
-        </Link>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Link to="/espace" className="inline-flex items-center gap-2 text-sm font-semibold text-brand-700 hover:underline">
+            <ArrowLeft size={16} /> Retour à mes espaces
+          </Link>
+          <Link
+            to="/dermatologie/historique"
+            className="inline-flex items-center gap-2 rounded-full bg-brand-100 px-4 py-2 text-sm font-semibold text-brand-800 transition hover:bg-brand-200"
+          >
+            <History size={16} /> Mes analyses
+          </Link>
+        </div>
 
         <h1 className="mt-4 text-3xl font-extrabold sm:text-4xl">Analyse de la peau</h1>
         <p className="mt-2 max-w-xl text-brand-900/60">

@@ -15,7 +15,7 @@ import Messages from "./pages/Messages";
 import Appointments from "./pages/Appointments";
 import AnalysisHistory from "./pages/AnalysisHistory";
 import AuthRoute from "./components/AuthRoute";
-
+import PatientRecord from "./pages/PatientRecord";
 export default function App() {
   return (
     <Routes>
@@ -33,7 +33,8 @@ export default function App() {
       <Route path="/messages" element={<AuthRoute><Messages /></AuthRoute>} />
       <Route path="/messages/:id" element={<AuthRoute><Messages /></AuthRoute>} />
       <Route path="/rendez-vous" element={<AuthRoute><Appointments /></AuthRoute>} />    
-        <Route path="/dermatologie/historique" element={<PatientRoute><AnalysisHistory /></PatientRoute>} />
+      <Route path="/patients/:id/dossier" element={<PatientRecord />} />
+      <Route path="/dermatologie/historique" element={<PatientRoute><AnalysisHistory /></PatientRoute>} />
     </Routes>
   );
 }

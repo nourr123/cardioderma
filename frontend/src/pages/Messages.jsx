@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   CalendarPlus,
+  FolderOpen,
   ImageOff,
   MessageSquare,
   Send,
@@ -259,6 +260,11 @@ function Chat({
         </div>
 
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          {role === "medecin" && (
+            <Link to={`/patients/${conversation.id}/dossier`} className="btn-ghost !px-3.5 !py-2 !text-xs">
+              <FolderOpen size={14} /> <span className="hidden md:inline">Dossier patient</span>
+            </Link>
+          )}
           {role === "medecin" && (
             <button
               type="button"

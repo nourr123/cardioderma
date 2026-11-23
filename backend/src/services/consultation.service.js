@@ -141,38 +141,67 @@ const createConversation = async (patient, { medecinId, referralToken }) => {
     if (analysis) analysisId = analysis._id;
   }
 
-  let conv;
-  let created = true;
-  try {
-    conv = await Conversation.create({
-      patient: patient._id,
-      medecin: medecin._id,
-      analysisId,
-      analysis: {
-        prediction: payload.prediction,
-        confidence: payload.confidence,
-        reason: payload.reason,
-      },
-      // basename : le nom vient d'un jeton signé par nous, mais on garde la précaution
-      image: typeof payload.image === "string" ? path.basename(payload.image) : undefined,
-      referralId: payload.jti,
-    });
-  } catch (err) {
-    // Même orientation envoyée deux fois : on renvoie la conversation existante
-    if (err.code === 11000) {
-      conv = await Conversation.findOne({ referralId: payload.jti, patient: patient._id });
-      if (!conv) throw err;
-      created = false;
-    } else {
-      throw err;
+  const analysisInfo = {
+    prediction: payload.prediction,
+    confidence: payload.confidence,
+    reason: payload.reason,
+  };
+  // basename : le nom vient d'un jeton signé par nous, mais on garde la précaution
+  const image = typeof payload.image === "string" ? path.basename(payload.image) : undefined;
+
+  // Un seul fil de discussion par patient et par médecin : l'historique est conservé.
+  // Une nouvelle analyse est ajoutée à la conversation existante (message d'information).
+  let conv = await Conversation.findOne({ patient: patient._id, medecin: medecin._id });
+  let created = false;
+  let followUp = null;
+
+  if (conv) {
+    if (conv.referralId !== payload.jti) {
+      const $set = { analysis: analysisInfo, referralId: payload.jti };
+      if (analysisId) $set.analysisId = analysisId;
+      if (image) $set.image = image;
+      await Conversation.updateOne({ _id: conv._id }, { $set });
+
+      const pct = Math.round((Number(payload.confidence) || 0) * 100);
+      const label = String(payload.prediction || "")
+        .replace(/_/g, " ")
+        .replace(/\s*photos?\s*$/i, "")
+        .trim();
+      followUp = await createMessage(conv, patient, {
+        type: "system",
+        text: `Nouvelle analyse IA : ${label} (confiance ${pct} %)`,
+      });
+    }
+  } else {
+    try {
+      conv = await Conversation.create({
+        patient: patient._id,
+        medecin: medecin._id,
+        analysisId,
+        analysis: analysisInfo,
+        image,
+        referralId: payload.jti,
+      });
+      created = true;
+    } catch (err) {
+      // Même orientation envoyée deux fois : on renvoie la conversation existante
+      if (err.code === 11000) {
+        conv = await Conversation.findOne({ referralId: payload.jti, patient: patient._id });
+        if (!conv) throw err;
+      } else {
+        throw err;
+      }
     }
   }
+
+  // L'analyse garde le lien vers la conversation (historique du patient)
+  if (analysisId) await Analysis.updateOne({ _id: analysisId }, { $set: { conversation: conv._id } });
 
   const conversation = await Conversation.findById(conv._id)
     .populate("patient", "nom prenom")
     .populate("medecin", "nom prenom specialite");
 
-  return { conversation, created };
+  return { conversation, created, followUp };
 };
 
 /* --------------------------------- Photo ---------------------------------- */

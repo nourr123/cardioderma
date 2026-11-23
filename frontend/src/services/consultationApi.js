@@ -55,6 +55,20 @@ export const consultationApi = {
     return (await request(`/${id}/opinions`, { method: "POST", body: JSON.stringify(body) })).message;
   },
 
+  // Dossier du patient (médecin) : { patient, analyses }
+  async patientHistory(id) {
+    const { patient, analyses } = await request(`/${id}/patient-history`);
+    return { patient, analyses };
+  },
+
+  async patientAnalysisImageUrl(id, analysisId) {
+    const res = await fetch(`${API_URL}/consultations/${id}/patient-history/${analysisId}/image`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+    });
+    if (!res.ok) throw new Error("Photo indisponible");
+    return URL.createObjectURL(await res.blob());
+  },
+
   // Rendez-vous de la conversation
   async listAppointments(id) {
     return (await request(`/${id}/appointments`)).appointments;
