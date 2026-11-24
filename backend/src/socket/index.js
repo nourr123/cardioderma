@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 const User = require("../models/user");
 const service = require("../services/consultation.service");
 const { emitMessage } = require("../utils/realtime");
+const { registerCall } = require("./call");
 
 const initSocket = (httpServer) => {
   const io = new Server(httpServer, {
@@ -38,6 +39,9 @@ const initSocket = (httpServer) => {
 
     // Une "salle" par utilisateur : couvre plusieurs onglets / appareils
     socket.join(`user:${user._id}`);
+
+    // Consultation vidéo (WebRTC)
+    registerCall(io, socket);
 
     // --- Envoi d'un message ---------------------------------------------------
     socket.on("message:send", async (payload, ack) => {

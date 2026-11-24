@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CalendarDays, Clock, MessageSquare } from "lucide-react";
 import Navbar from "../components/Navbar";
-import { AppointmentActions, AppointmentStatusBadge } from "../components/chat/AppointmentCard";
+import { AppointmentActions, AppointmentStatusBadge, JoinCallButton } from "../components/chat/AppointmentCard";
 import { fmtDateTime, personName } from "../components/chat/format";
 import { appointmentApi } from "../services/appointmentApi";
 import { getSocket } from "../services/socket";
@@ -40,6 +40,7 @@ function Row({ a, role, onAct, busy }) {
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-brand-100 pt-3">
+        <JoinCallButton appointment={a} />
         <AppointmentActions appointment={a} role={role} onAct={onAct} busy={busy?.id === a.id ? busy.action : null} />
         <Link
           to={`/messages/${a.conversation}`}

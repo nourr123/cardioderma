@@ -1,4 +1,6 @@
-import { CalendarDays, Check, Clock, Loader2, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { CalendarDays, Check, Clock, Loader2, Video, X } from "lucide-react";
 import { APPOINTMENT_STATUS, fmtDateTime, personName } from "./format";
 
 // Boutons disponibles selon le statut et le rôle de la personne connectée.
@@ -21,6 +23,35 @@ export function appointmentActions(appointment, role) {
     actions.push({ action: "cancel", label: "Annuler le rendez-vous", icon: X });
   }
   return actions;
+}
+
+const OPENS_BEFORE_MS = 10 * 60 * 1000; // doit rester identique au serveur
+const CLOSES_AFTER_MS = 30 * 60 * 1000;
+
+// La salle vidéo est ouverte 10 min avant l'heure et jusqu'à 30 min après la fin prévue
+export const canJoinCall = (a, now = Date.now()) =>
+  a.status === "confirme" &&
+  now >= new Date(a.startsAt).getTime() - OPENS_BEFORE_MS &&
+  now <= new Date(a.endsAt).getTime() + CLOSES_AFTER_MS;
+
+export function JoinCallButton({ appointment }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 15000); // le bouton s'active tout seul
+    return () => clearInterval(t);
+  }, []);
+
+  if (appointment.status !== "confirme") return null;
+  if (!canJoinCall(appointment)) {
+    return Date.now() < new Date(appointment.startsAt).getTime() ? (
+      <span className="text-xs text-brand-900/50">La salle vidéo ouvre 10 min avant l'heure.</span>
+    ) : null;
+  }
+  return (
+    <Link to={`/visio/${appointment.id}`} className="btn-primary !px-4 !py-2 !text-xs">
+      <Video size={14} /> Rejoindre la consultation
+    </Link>
+  );
 }
 
 export function AppointmentStatusBadge({ status }) {
@@ -85,8 +116,9 @@ export default function AppointmentCard({ appointment, role, onAct, busy }) {
         <AppointmentStatusBadge status={appointment.status} />
       </div>
 
-      {appointmentActions(appointment, role).length > 0 && (
-        <div className="border-t border-brand-100 bg-brand-50/40 px-4 py-3">
+      {(appointmentActions(appointment, role).length > 0 || appointment.status === "confirme") && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-brand-100 bg-brand-50/40 px-4 py-3">
+          <JoinCallButton appointment={appointment} />
           <AppointmentActions appointment={appointment} role={role} onAct={onAct} busy={busy} />
         </div>
       )}

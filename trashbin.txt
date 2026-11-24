@@ -1,0 +1,4 @@
+  <Route path="/rendez-vous" element={<ProtectedRoute><Appointments /></ProtectedRoute>} />
+ 
+Profile
+ 

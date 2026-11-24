@@ -16,6 +16,7 @@ import Appointments from "./pages/Appointments";
 import AnalysisHistory from "./pages/AnalysisHistory";
 import AuthRoute from "./components/AuthRoute";
 import PatientRecord from "./pages/PatientRecord";
+import Call from "./pages/Call";
 export default function App() {
   return (
     <Routes>
@@ -35,6 +36,7 @@ export default function App() {
       <Route path="/rendez-vous" element={<AuthRoute><Appointments /></AuthRoute>} />    
       <Route path="/patients/:id/dossier" element={<PatientRecord />} />
       <Route path="/dermatologie/historique" element={<PatientRoute><AnalysisHistory /></PatientRoute>} />
+      <Route path="/visio/:appointmentId" element={<Call />} />
     </Routes>
   );
 }
