@@ -16,6 +16,10 @@ import Appointments from "./pages/Appointments";
 import AnalysisHistory from "./pages/AnalysisHistory";
 import AuthRoute from "./components/AuthRoute";
 import PatientRecord from "./pages/PatientRecord";
+import Marketplace from "./pages/Marketplace";
+import Cart from "./pages/Cart";
+import CheckoutSuccess from "./pages/CheckoutSuccess";
+
 export default function App() {
   return (
     <Routes>
@@ -32,9 +36,14 @@ export default function App() {
       <Route path="/consultation/medecin" element={<PatientRoute><ChooseDoctor /></PatientRoute>} />
       <Route path="/messages" element={<AuthRoute><Messages /></AuthRoute>} />
       <Route path="/messages/:id" element={<AuthRoute><Messages /></AuthRoute>} />
-      <Route path="/rendez-vous" element={<AuthRoute><Appointments /></AuthRoute>} />    
+      <Route path="/rendez-vous" element={<AuthRoute><Appointments /></AuthRoute>} />
       <Route path="/patients/:id/dossier" element={<PatientRecord />} />
       <Route path="/dermatologie/historique" element={<PatientRoute><AnalysisHistory /></PatientRoute>} />
+
+      {/* Marketplace et panier : réservés aux patients */}
+      <Route path="/marketplace" element={<PatientRoute><Marketplace /></PatientRoute>} />
+      <Route path="/panier" element={<PatientRoute><Cart /></PatientRoute>} />
+      <Route path="/commande/succes" element={<PatientRoute><CheckoutSuccess /></PatientRoute>} />
     </Routes>
   );
 }
