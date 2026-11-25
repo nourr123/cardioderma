@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, Check, HeartPulse, ScanFace } from "lucide-react";
+import { ArrowRight, Check, HeartPulse, ScanFace, ShoppingBag } from "lucide-react";
 import Navbar from "../components/Navbar";
 import { getUser } from "../utils/getUser";
 
@@ -37,11 +37,29 @@ const SPACES = [
     description: "Suivi de votre rythme cardiaque à partir de votre capteur ECG connecté.",
     features: ["Courbe ECG et fréquence cardiaque", "Niveau de stress estimé", "Historique de vos mesures"],
   },
+  {
+    key: "marketplace",
+    title: "Marketplace",
+    icon: ShoppingBag,
+    available: true,
+    to: "/marketplace",
+    bar: "from-amber-400 to-orange-500",
+    tint: "from-amber-50 to-white",
+    iconBox: "from-amber-400 to-orange-500 shadow-orange-500/30",
+    check: "bg-amber-100 text-amber-700",
+    description: "Retrouvez les produits de santé sélectionnés pour vous et ajoutez-les à votre panier.",
+    features: [
+      "Produits de santé sélectionnés",
+      "Recherche et filtres par catégorie",
+      "Panier enregistré sur votre appareil",
+    ],
+  },
 ];
 
 function SpaceCard({ space, delay }) {
   const { title, icon: Icon, available, to, bar, tint, iconBox, check, description, features } = space;
   const isDerma = space.key === "dermatologie";
+  const isCardio = space.key === "cardio";
 
   return (
     <article
@@ -55,9 +73,7 @@ function SpaceCard({ space, delay }) {
 
       {/* En-tête teinté */}
       <div className={`relative overflow-hidden bg-gradient-to-br ${tint} p-5`}>
-        {isDerma ? (
-          <span className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-brand-500/15 blur-2xl transition duration-500 group-hover:scale-125" />
-        ) : (
+        {isCardio ? (
           <svg
             viewBox="0 0 300 80"
             preserveAspectRatio="none"
@@ -75,13 +91,19 @@ function SpaceCard({ space, delay }) {
               vectorEffect="non-scaling-stroke"
             />
           </svg>
+        ) : (
+          <span
+            className={`absolute -right-8 -top-8 h-32 w-32 rounded-full blur-2xl transition duration-500 group-hover:scale-125 ${
+              isDerma ? "bg-brand-500/15" : "bg-amber-400/20"
+            }`}
+          />
         )}
 
         <div className="relative flex items-start justify-between">
           <span
             className={`relative flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br text-white shadow-lg ${iconBox}`}
           >
-            <Icon size={26} className={isDerma ? "" : "beat"} />
+            <Icon size={26} className={isCardio ? "beat" : ""} />
             {isDerma && <span className="scan absolute left-0 right-0 h-0.5 bg-white/80" />}
           </span>
 
@@ -141,7 +163,7 @@ export default function PatientSpace() {
   const firstName = user.prenom || user.firstName || user.fullName || "";
 
   return (
-    <div className="flex min-h-screen flex-col bg-brand-50/60 md:h-screen md:overflow-hidden">
+    <div className="flex min-h-screen flex-col bg-brand-50/60">
       <style>{`
         @keyframes psFadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
         .ps-fade { animation: psFadeUp .6s ease-out both; }
@@ -150,7 +172,7 @@ export default function PatientSpace() {
 
       <Navbar />
 
-      <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-6 pb-6 pt-6 md:min-h-0">
+      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 pb-8 pt-6">
         <div className="ps-fade">
           <h1 className="font-heading text-2xl font-extrabold text-brand-900 sm:text-3xl">
             Bonjour {firstName}
@@ -158,7 +180,7 @@ export default function PatientSpace() {
           <p className="mt-1 text-sm text-brand-900/60">Choisissez l'espace que vous souhaitez ouvrir.</p>
         </div>
 
-        <section className="mt-5 grid flex-1 gap-5 md:min-h-0 md:grid-cols-2">
+        <section className="mt-5 grid flex-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {SPACES.map((s, i) => (
             <SpaceCard key={s.key} space={s} delay={100 + i * 120} />
           ))}

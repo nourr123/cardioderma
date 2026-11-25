@@ -3,9 +3,10 @@ import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle, Ban, CalendarDays, Check, FileText, Inbox, LayoutDashboard,
   LogOut, Mail, Phone, RefreshCw, RotateCcw, Search, ShieldCheck,
-  Stethoscope, Trash2, User, UserCheck, Users, X,
+  Stethoscope, Store, Trash2, User, UserCheck, Users, X,
 } from "lucide-react";
 import Logo from "../components/Logo";
+import AdminMarketplace from "../components/AdminMarketplace";
 import { adminApi } from "../services/adminApi";
 
 /* ------------------------------ Constantes ------------------------------ */
@@ -22,12 +23,14 @@ const NAV = [
   { key: "overview", label: "Vue d'ensemble", icon: LayoutDashboard },
   { key: "pending", label: "Demandes médecins", icon: UserCheck },
   { key: "users", label: "Comptes", icon: Users },
+  { key: "marketplace", label: "Marketplace", icon: Store },
 ];
 
 const PAGES = {
   overview: ["Vue d'ensemble", "L'état de la plateforme en un coup d'œil."],
   pending: ["Demandes médecins", "Vérifiez les diplômes avant d'activer un compte."],
   users: ["Comptes", "Recherchez un compte, bannissez-le ou supprimez-le."],
+  marketplace: ["Marketplace", "Ajoutez, modifiez ou supprimez les produits proposés aux patients."],
 };
 
 const ACTIONS = {
@@ -658,6 +661,9 @@ export default function AdminDashboard() {
               )}
             </section>
           )}
+
+          {/* ============================ MARKETPLACE ============================ */}
+          {tab === "marketplace" && <AdminMarketplace notify={notify} />}
         </main>
       </div>
 

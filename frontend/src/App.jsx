@@ -1,3 +1,4 @@
+
 import { Routes, Route } from "react-router-dom";
 import Home from "./pages/Home";
 import Register from "./pages/Register";
@@ -18,6 +19,10 @@ import AuthRoute from "./components/AuthRoute";
 import PatientRecord from "./pages/PatientRecord";
 import Call from "./pages/Call";
 import DoctorSpace from "./pages/DoctorSpace";
+import Marketplace from "./pages/Marketplace";
+import Cart from "./pages/Cart";
+import CheckoutSuccess from "./pages/CheckoutSuccess";
+
 export default function App() {
   return (
     <Routes>
@@ -34,11 +39,17 @@ export default function App() {
       <Route path="/consultation/medecin" element={<PatientRoute><ChooseDoctor /></PatientRoute>} />
       <Route path="/messages" element={<AuthRoute><Messages /></AuthRoute>} />
       <Route path="/messages/:id" element={<AuthRoute><Messages /></AuthRoute>} />
-      <Route path="/rendez-vous" element={<AuthRoute><Appointments /></AuthRoute>} />    
+      <Route path="/rendez-vous" element={<AuthRoute><Appointments /></AuthRoute>} />
       <Route path="/patients/:id/dossier" element={<PatientRecord />} />
       <Route path="/dermatologie/historique" element={<PatientRoute><AnalysisHistory /></PatientRoute>} />
+
       <Route path="/visio/:appointmentId" element={<Call />} />
       <Route path="/medecin" element={<DoctorSpace />} />
+
+      {/* Marketplace et panier : réservés aux patients */}
+      <Route path="/marketplace" element={<PatientRoute><Marketplace /></PatientRoute>} />
+      <Route path="/panier" element={<PatientRoute><Cart /></PatientRoute>} />
+      <Route path="/commande/succes" element={<PatientRoute><CheckoutSuccess /></PatientRoute>} />
     </Routes>
   );
 }
