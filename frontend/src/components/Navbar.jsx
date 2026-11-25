@@ -48,12 +48,10 @@ export default function Navbar() {
 
         {isLoggedIn ? (
           <nav className="flex items-center gap-1.5">
-            {/* Le patient a un espace (Cardio / Dermatologie) ; le médecin arrive directement sur sa messagerie */}
-            {!isDoctor && (
-              <NavItem to="/espace" icon={LayoutGrid}>
-                Mon espace
-              </NavItem>
-            )}
+            {/* Patient : choix Cardio / Dermatologie ; médecin : tableau de bord */}
+            <NavItem to={isDoctor ? "/medecin" : "/espace"} icon={LayoutGrid}>
+              Mon espace
+            </NavItem>
             <NavItem to="/messages" icon={MessageSquare}>
               Messages
             </NavItem>
