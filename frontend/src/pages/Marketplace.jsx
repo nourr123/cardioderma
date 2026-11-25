@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Check, Search, ShoppingBag, ShoppingCart } from "lucide-react";
+import { ArrowLeft, Check, FileText, Search, ShoppingBag, ShoppingCart } from "lucide-react";
 import ProductCard from "../components/ProductCard";
 import { marketplaceApi } from "../services/marketplaceApi";
 import { useCart } from "../context/CartContext";
+import { homePath, isDoctor } from "../utils/homePath";
 
 export default function Marketplace() {
   const navigate = useNavigate();
   const { addItem, count } = useCart();
+  const doctor = isDoctor();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -54,7 +56,16 @@ export default function Marketplace() {
             <h1 className="font-heading text-2xl font-extrabold text-brand-900 lg:text-3xl">Marketplace</h1>
             <p className="mt-1 text-sm text-brand-900/60">Les produits de santé sélectionnés pour vous.</p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            {doctor ? (
+              <button onClick={() => navigate("/ordonnance/nouvelle")} className="btn-ghost">
+                <FileText size={16} /> Nouvelle ordonnance
+              </button>
+            ) : (
+              <button onClick={() => navigate("/ordonnances")} className="btn-ghost">
+                <FileText size={16} /> Mes ordonnances
+              </button>
+            )}
             <button onClick={() => navigate("/panier")} className="btn-primary relative" aria-label="Voir le panier">
               <ShoppingCart size={16} /> Panier
               {count > 0 && (
@@ -63,7 +74,8 @@ export default function Marketplace() {
                 </span>
               )}
             </button>
-            <button onClick={() => navigate("/espace")} className="btn-ghost">              <ArrowLeft size={16} /> Retour
+            <button onClick={() => navigate(homePath())} className="btn-ghost">
+              <ArrowLeft size={16} /> Retour
             </button>
           </div>
         </div>

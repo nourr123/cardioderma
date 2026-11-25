@@ -11,5 +11,6 @@ router.use("/appointments", require("./appointment.routes"));
 
 router.use("/products", require("./products"));
 router.use("/orders", require("./orders"));
+router.use("/prescriptions", require("./prescriptions"));
 
 module.exports = router;

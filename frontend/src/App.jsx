@@ -22,6 +22,8 @@ import DoctorSpace from "./pages/DoctorSpace";
 import Marketplace from "./pages/Marketplace";
 import Cart from "./pages/Cart";
 import CheckoutSuccess from "./pages/CheckoutSuccess";
+import DoctorPrescription from "./pages/DoctorPrescription";
+import Prescriptions from "./pages/Prescriptions";
 
 export default function App() {
   return (
@@ -42,6 +44,14 @@ export default function App() {
       <Route path="/rendez-vous" element={<AuthRoute><Appointments /></AuthRoute>} />
       <Route path="/patients/:id/dossier" element={<PatientRecord />} />
       <Route path="/dermatologie/historique" element={<PatientRoute><AnalysisHistory /></PatientRoute>} />
+      
+
+      <Route path="/marketplace" element={<AuthRoute><Marketplace /></AuthRoute>} />
+      <Route path="/panier" element={<AuthRoute><Cart /></AuthRoute>} />
+      <Route path="/commande/succes" element={<AuthRoute><CheckoutSuccess /></AuthRoute>} />
+
+      <Route path="/ordonnance/nouvelle" element={<AuthRoute><DoctorPrescription /></AuthRoute>} />
+      <Route path="/ordonnances" element={<PatientRoute><Prescriptions /></PatientRoute>} />
 
       <Route path="/visio/:appointmentId" element={<Call />} />
       <Route path="/medecin" element={<DoctorSpace />} />

@@ -4,9 +4,11 @@ import {
   CalendarCheck,
   CalendarDays,
   ClipboardList,
+  FileText,
   FolderOpen,
   MessageSquare,
   Search,
+  ShoppingBag,
   Stethoscope,
   Users,
 } from "lucide-react";
@@ -120,10 +122,22 @@ export default function DoctorSpace() {
     <div className="min-h-screen bg-brand-50/60">
       <Navbar />
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        <h1 className="font-heading text-3xl font-extrabold">
-          {hello} Dr {user?.prenom ?? ""} {user?.nom ?? ""}
-        </h1>
-        <p className="mt-1 text-sm text-brand-900/60">Votre activité du jour et les cas qui attendent votre avis.</p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="font-heading text-3xl font-extrabold">
+              {hello} Dr {user?.prenom ?? ""} {user?.nom ?? ""}
+            </h1>
+            <p className="mt-1 text-sm text-brand-900/60">Votre activité du jour et les cas qui attendent votre avis.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link to="/ordonnance/nouvelle" className="btn-primary">
+              <FileText size={16} /> Nouvelle ordonnance
+            </Link>
+            <Link to="/marketplace" className="btn-ghost">
+              <ShoppingBag size={16} /> Marketplace
+            </Link>
+          </div>
+        </div>
 
         {error && <p className="mt-6 rounded-xl bg-coral-soft px-4 py-3 text-sm font-medium text-coral">{error}</p>}
 
@@ -249,12 +263,18 @@ export default function DoctorSpace() {
                             RDV {fmtDateTime(p.nextAppointment.startsAt)}
                           </span>
                         )}
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
                           <Link to={`/patients/${p.conversationId}/dossier`} className="btn-ghost !px-3.5 !py-2 !text-xs">
                             <FolderOpen size={14} /> Dossier
                           </Link>
                           <Link to={`/messages/${p.conversationId}`} className="btn-ghost !px-3.5 !py-2 !text-xs">
                             <MessageSquare size={14} /> Conversation
+                          </Link>
+                          <Link
+                            to={`/ordonnance/nouvelle?conversation=${p.conversationId}`}
+                            className="btn-ghost !px-3.5 !py-2 !text-xs"
+                          >
+                            <FileText size={14} /> Ordonnance
                           </Link>
                         </div>
                       </li>

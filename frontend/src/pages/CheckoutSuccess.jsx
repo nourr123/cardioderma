@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Check } from "lucide-react";
 import { formatPrice } from "../utils/formatPrice";import { orderApi } from "../services/marketplaceApi";
 import { useCart } from "../context/CartContext";
+import { homePath } from "../utils/homePath";
 
 export default function CheckoutSuccess() {
   const [params] = useSearchParams();
@@ -90,8 +91,8 @@ export default function CheckoutSuccess() {
             <Link to="/marketplace" className="btn-primary">
               Retour à la marketplace
             </Link>
-            <Link to="/espace" className="btn-ghost">
-              Mon espace
+            <Link to={homePath()} className="btn-ghost">
+             Mon espace
             </Link>
           </div>
         </div>
