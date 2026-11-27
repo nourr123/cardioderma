@@ -24,7 +24,8 @@ import Cart from "./pages/Cart";
 import CheckoutSuccess from "./pages/CheckoutSuccess";
 import DoctorPrescription from "./pages/DoctorPrescription";
 import Prescriptions from "./pages/Prescriptions";
-
+import CardioSante from "./pages/CardioSante";
+import CardioSession from "./pages/CardioSession";
 export default function App() {
   return (
     <Routes>
@@ -37,6 +38,7 @@ export default function App() {
 
       <Route path="/espace" element={<PatientRoute><PatientSpace /></PatientRoute>} />
       <Route path="/dermatologie" element={<PatientRoute><SkinAnalysis /></PatientRoute>} />
+      <Route path="/cardio" element={<PatientRoute><CardioSante /></PatientRoute>} /><Route path="/cardio/session/:id" element={<PatientRoute><CardioSession /></PatientRoute>} />
       <Route path="/profil" element={<Profile />} />
       <Route path="/consultation/medecin" element={<PatientRoute><ChooseDoctor /></PatientRoute>} />
       <Route path="/messages" element={<AuthRoute><Messages /></AuthRoute>} />

@@ -1,4 +1,4 @@
-
+const cardioRoutes = require("./cardio.routes");
 const express = require("express");
 const router = express.Router();
 
@@ -12,5 +12,5 @@ router.use("/appointments", require("./appointment.routes"));
 router.use("/products", require("./products"));
 router.use("/orders", require("./orders"));
 router.use("/prescriptions", require("./prescriptions"));
-
+router.use("/cardio", cardioRoutes);
 module.exports = router;

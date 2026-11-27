@@ -1,0 +1,1276 @@
+﻿
+===== backend\src\routes\cardio.routes.js =====
+
+const express = require("express");
+const { protect } = require("../middlewares/auth.middleware"); // â† ADAPTER (voir ci-dessous)
+const c = require("../controllers/cardio.controller");
+
+const router = express.Router();
+
+router.post("/device/pair", c.pair); // appelÃ© par le Raspberry Pi, protÃ©gÃ© par le code d'appairage
+
+router.use(protect);
+router.get("/device", c.deviceStatus);
+router.post("/device/pairing", c.createPairing);
+router.delete("/device", c.removeDevice);
+
+router.get("/session/active", c.activeSession);
+router.post("/session/start", c.startSession);
+router.post("/session/stop", c.stopSession);
+
+router.get("/sessions", c.listSessions);
+router.get("/sessions/:id", c.sessionDetail);
+router.delete("/sessions/:id", c.deleteSession);
+router.get("/measures/:id/ecg", c.measureEcg);
+
+module.exports = router;
+
+===== backend\src\controllers\cardio.controller.js =====
+
+const crypto = require("crypto");
+const mongoose = require("mongoose");
+const CardioDevice = require("../models/CardioDevice");
+const CardioSession = require("../models/CardioSession");
+const CardioMeasure = require("../models/CardioMeasure");
+const { isDeviceOnline, notifySession, disconnectDevice } = require("../socket/cardio");
+
+const sha = (s) => crypto.createHash("sha256").update(String(s)).digest("hex");
+const uid = (req) => String(req.user._id || req.user.id);
+const ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sans I, O, 0, 1
+const introuvable = (res) => res.status(404).json({ message: "Introuvable." });
+
+// limite les essais de code d'appairage : 10 par 10 minutes et par adresse IP
+const essais = new Map();
+function autorise(ip) {
+  const now = Date.now();
+  const e = essais.get(ip);
+  if (!e || e.reset < now) {
+    essais.set(ip, { n: 1, reset: now + 10 * 60 * 1000 });
+    return true;
+  }
+  e.n += 1;
+  return e.n <= 10;
+}
+
+/* ---------- Dispositif ---------- */
+exports.deviceStatus = async (req, res, next) => {
+  try {
+    const pid = uid(req);
+    const dev = await CardioDevice.findOne({ patient: pid });
+    res.json({
+      paired: !!(dev && dev.keyHash),
+      online: isDeviceOnline(pid),
+      lastSeen: dev ? dev.lastSeen : null,
+      pairingActive: !!(dev && dev.pairingExpires && dev.pairingExpires > new Date()),
+    });
+  } catch (e) { next(e); }
+};
+
+exports.createPairing = async (req, res, next) => {
+  try {
+    const raw = Array.from(crypto.randomBytes(6), (b) => ALPHA[b % 32]).join("");
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await CardioDevice.findOneAndUpdate(
+      { patient: uid(req) },
+      { $set: { pairingHash: sha(raw), pairingExpires: expiresAt } },
+      { upsert: true, setDefaultsOnInsert: true }
+    );
+    res.json({ code: `${raw.slice(0, 3)}-${raw.slice(3)}`, expiresAt });
+  } catch (e) { next(e); }
+};
+
+// AppelÃ© par le Raspberry Pi (sans JWT) : Ã©change le code contre une clÃ© durable
+exports.pair = async (req, res, next) => {
+  try {
+    if (!autorise(req.ip)) {
+      return res.status(429).json({ message: "Trop d'essais. RÃ©essayez dans quelques minutes." });
+    }
+    const raw = String((req.body && req.body.code) || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (raw.length !== 6) return res.status(400).json({ message: "Code invalide ou expirÃ©." });
+
+    const cle = crypto.randomBytes(32).toString("hex");
+    const dev = await CardioDevice.findOneAndUpdate(
+      { pairingHash: sha(raw), pairingExpires: { $gt: new Date() } },
+      { $set: { keyHash: sha(cle) }, $unset: { pairingHash: "", pairingExpires: "" } },
+      { new: true }
+    );
+    if (!dev) return res.status(400).json({ message: "Code invalide ou expirÃ©." });
+
+    disconnectDevice(dev.patient);
+    res.json({ deviceKey: cle });
+  } catch (e) { next(e); }
+};
+
+exports.removeDevice = async (req, res, next) => {
+  try {
+    const pid = uid(req);
+    await CardioDevice.updateOne(
+      { patient: pid },
+      { $unset: { keyHash: "", pairingHash: "", pairingExpires: "", lastSeen: "" } }
+    );
+    const s = await CardioSession.findOneAndUpdate(
+      { patient: pid, status: "active" },
+      { $set: { status: "ended", endedAt: new Date() } },
+      { new: true }
+    );
+    if (s) notifySession(pid, null);
+    disconnectDevice(pid);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+};
+
+/* ---------- Sessions ---------- */
+exports.activeSession = async (req, res, next) => {
+  try {
+    const session = await CardioSession.findOne({ patient: uid(req), status: "active" }).lean();
+    const measures = session
+      ? await CardioMeasure.find({ session: session._id }).select("-ecg").sort({ at: 1 }).lean()
+      : [];
+    res.json({ session, measures });
+  } catch (e) { next(e); }
+};
+
+exports.startSession = async (req, res, next) => {
+  try {
+    const pid = uid(req);
+    if (!isDeviceOnline(pid)) {
+      return res.status(409).json({ message: "Le dispositif n'est pas connectÃ©." });
+    }
+    let s = await CardioSession.findOne({ patient: pid, status: "active" });
+    if (!s) {
+      try {
+        s = await CardioSession.create({ patient: pid, startedAt: new Date(), status: "active" });
+      } catch (e) {
+        if (e.code !== 11000) throw e;
+        s = await CardioSession.findOne({ patient: pid, status: "active" });
+      }
+    }
+    notifySession(pid, s);
+    res.status(201).json({ session: s });
+  } catch (e) { next(e); }
+};
+
+exports.stopSession = async (req, res, next) => {
+  try {
+    const pid = uid(req);
+    const s = await CardioSession.findOneAndUpdate(
+      { patient: pid, status: "active" },
+      { $set: { status: "ended", endedAt: new Date() } },
+      { new: true }
+    );
+    notifySession(pid, null);
+    res.json({ session: s });
+  } catch (e) { next(e); }
+};
+
+exports.listSessions = async (req, res, next) => {
+  try {
+    const sessions = await CardioSession.find({ patient: uid(req) }).sort({ startedAt: -1 }).limit(50).lean();
+    const agg = await CardioMeasure.aggregate([
+      { $match: { session: { $in: sessions.map((s) => s._id) } } },
+      { $group: { _id: "$session", count: { $sum: 1 }, bpm: { $avg: "$bpm" }, stress: { $avg: "$stress" }, rmssd: { $avg: "$rmssd" } } },
+    ]);
+    const par = new Map(agg.map((a) => [String(a._id), a]));
+    res.json(
+      sessions.map((s) => {
+        const a = par.get(String(s._id));
+        return {
+          ...s,
+          count: a ? a.count : 0,
+          bpmAvg: a ? Math.round(a.bpm) : null,
+          stressAvg: a ? Math.round(a.stress) : null,
+          rmssdAvg: a ? Math.round(a.rmssd * 10) / 10 : null,
+        };
+      })
+    );
+  } catch (e) { next(e); }
+};
+
+exports.sessionDetail = async (req, res, next) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return introuvable(res);
+    const session = await CardioSession.findOne({ _id: req.params.id, patient: uid(req) }).lean();
+    if (!session) return introuvable(res);
+    const measures = await CardioMeasure.find({ session: session._id }).select("-ecg").sort({ at: 1 }).lean();
+    res.json({ session, measures });
+  } catch (e) { next(e); }
+};
+
+exports.measureEcg = async (req, res, next) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return introuvable(res);
+    const m = await CardioMeasure.findOne({ _id: req.params.id, patient: uid(req) }).select("ecg").lean();
+    if (!m) return introuvable(res);
+    res.json({ ecg: m.ecg });
+  } catch (e) { next(e); }
+};
+
+exports.deleteSession = async (req, res, next) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return introuvable(res);
+    const s = await CardioSession.findOne({ _id: req.params.id, patient: uid(req) });
+    if (!s) return introuvable(res);
+    if (s.status === "active") return res.status(409).json({ message: "ArrÃªtez la session avant de la supprimer." });
+    await CardioMeasure.deleteMany({ session: s._id });
+    await s.deleteOne();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+};
+
+===== backend\src\models\CardioDevice.js =====
+
+const mongoose = require("mongoose");
+
+const schema = new mongoose.Schema(
+  {
+    patient: { type: mongoose.Schema.Types.ObjectId, required: true, unique: true },
+    keyHash: { type: String, index: true, sparse: true },
+    pairingHash: { type: String },
+    pairingExpires: { type: Date },
+    lastSeen: { type: Date },
+  },
+  { timestamps: true }
+);
+
+module.exports = mongoose.models.CardioDevice || mongoose.model("CardioDevice", schema);
+
+===== backend\src\models\CardioMeasure.js =====
+
+const mongoose = require("mongoose");
+
+const schema = new mongoose.Schema({
+  session: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
+  patient: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
+  at: { type: Date, required: true },
+  bpm: Number,
+  rmssd: Number,
+  sdnn: Number,
+  pnn50: Number,
+  stress: Number,
+  level: { type: String, enum: ["Faible", "ModÃ©rÃ©", "Ã‰levÃ©", null] },
+  beats: Number,
+  movement: Number,
+  ecg: { type: [Number], default: [] },
+});
+
+schema.index({ session: 1, at: 1 });
+
+module.exports = mongoose.models.CardioMeasure || mongoose.model("CardioMeasure", schema);
+
+===== backend\src\models\CardioSession.js =====
+
+const mongoose = require("mongoose");
+
+const schema = new mongoose.Schema(
+  {
+    patient: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
+    status: { type: String, enum: ["active", "ended"], default: "active" },
+    startedAt: { type: Date, required: true },
+    endedAt: { type: Date },
+  },
+  { timestamps: true }
+);
+
+schema.index({ patient: 1, startedAt: -1 });
+schema.index({ patient: 1 }, { unique: true, partialFilterExpression: { status: "active" } });
+
+module.exports = mongoose.models.CardioSession || mongoose.model("CardioSession", schema);
+
+===== backend\src\socket\cardio.js =====
+
+// Temps rÃ©el : namespace /device (le Raspberry Pi) et /cardio (le navigateur du patient).
+const crypto = require("crypto");
+const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
+const CardioDevice = require("../models/CardioDevice");
+const CardioSession = require("../models/CardioSession");
+const CardioMeasure = require("../models/CardioMeasure");
+
+const sha = (s) => crypto.createHash("sha256").update(String(s)).digest("hex");
+const fin = (v) => typeof v === "number" && Number.isFinite(v);
+const tableau = (a, max) => Array.isArray(a) && a.length <= max && a.every(fin);
+const dans = (v, lo, hi) => fin(v) && v >= lo && v <= hi;
+const texte = (s) => (typeof s === "string" ? s.slice(0, 200) : "");
+
+const live = new Map(); // patientId -> { online, state, metrics }
+let nsDevice = null;
+let nsPatient = null;
+
+const versPatient = (pid, evt, data) => nsPatient && nsPatient.to(`patient:${pid}`).emit(evt, data);
+
+const isDeviceOnline = (pid) => !!(live.get(String(pid)) && live.get(String(pid)).online);
+
+function notifySession(pid, session) {
+  pid = String(pid);
+  if (nsDevice) {
+    nsDevice.to(`device:${pid}`).emit("session:sync", { sessionId: session ? String(session._id) : null });
+  }
+  versPatient(pid, "session:update", { session: session || null });
+}
+
+function disconnectDevice(pid) {
+  if (nsDevice) nsDevice.in(`device:${String(pid)}`).disconnectSockets(true);
+}
+
+const mpuPropre = (m) =>
+  m && typeof m === "object"
+    ? {
+        dispo: !!m.dispo,
+        niveau: fin(m.niveau) ? m.niveau : 0,
+        acc: tableau(m.acc, 3) ? m.acc : [0, 0, 0],
+        gyro: tableau(m.gyro, 3) ? m.gyro : [0, 0, 0],
+      }
+    : null;
+
+const metriquesPropres = (d) => ({
+  valide: !!d.valide,
+  bpm_ok: !!d.bpm_ok,
+  message: texte(d.message),
+  bpm: fin(d.bpm) ? d.bpm : null,
+  rmssd: fin(d.rmssd) ? d.rmssd : null,
+  sdnn: fin(d.sdnn) ? d.sdnn : null,
+  pnn50: fin(d.pnn50) ? d.pnn50 : null,
+  stress: fin(d.stress) ? d.stress : null,
+  niveau: ["Faible", "ModÃ©rÃ©", "Ã‰levÃ©"].includes(d.niveau) ? d.niveau : null,
+  nb_battements: fin(d.nb_battements) ? d.nb_battements : 0,
+  duree: fin(d.duree) ? d.duree : 0,
+  mouvement: !!d.mouvement,
+  mpu: mpuPropre(d.mpu),
+});
+
+function initCardio(io) {
+  nsDevice = io.of("/device");
+  nsPatient = io.of("/cardio");
+
+  /* ---------- Raspberry Pi ---------- */
+  nsDevice.use(async (socket, next) => {
+    try {
+      const cle = socket.handshake.auth && socket.handshake.auth.deviceKey;
+      if (!cle) return next(new Error("unauthorized"));
+      const dev = await CardioDevice.findOne({ keyHash: sha(cle) }).select("patient");
+      if (!dev) return next(new Error("unauthorized"));
+      socket.data.patientId = String(dev.patient);
+      next();
+    } catch {
+      next(new Error("server"));
+    }
+  });
+
+  nsDevice.on("connection", async (socket) => {
+    const pid = socket.data.patientId;
+    const room = `device:${pid}`;
+    try {
+      // un seul Pi par patient : le plus rÃ©cent remplace l'ancien
+      const anciens = await nsDevice.in(room).fetchSockets();
+      anciens.forEach((s) => s.disconnect(true));
+      socket.join(room);
+      live.set(pid, { online: true, state: null, metrics: null });
+      await CardioDevice.updateOne({ patient: pid }, { $set: { lastSeen: new Date() } });
+      versPatient(pid, "device:status", { online: true });
+
+      const active = await CardioSession.findOne({ patient: pid, status: "active" }).select("_id");
+      socket.emit("session:sync", { sessionId: active ? String(active._id) : null });
+    } catch (e) {
+      console.error("[cardio] connexion Pi :", e.message);
+    }
+
+    socket.on("signal", (d) => {
+      if (!d || !tableau(d.y, 4000) || !tableau(d.pics || [], 300) || !fin(d.fs)) return;
+      versPatient(pid, "signal", { y: d.y, pics: d.pics || [], fs: d.fs });
+    });
+
+    socket.on("state", (d) => {
+      if (!d || typeof d !== "object") return;
+      const state = {
+        signal_recu: !!d.signal_recu,
+        electrodes_ok: !!d.electrodes_ok,
+        mpu: !!d.mpu,
+        simulation: !!d.simulation,
+      };
+      const l = live.get(pid);
+      if (l) l.state = state;
+      versPatient(pid, "device:state", state);
+    });
+
+    socket.on("metrics", (d) => {
+      if (!d || typeof d !== "object") return;
+      const m = metriquesPropres(d);
+      const l = live.get(pid);
+      if (l) l.metrics = m;
+      versPatient(pid, "metrics", m);
+    });
+
+    socket.on("measure", async (d) => {
+      try {
+        if (!d || !mongoose.isValidObjectId(d.session_id)) return;
+        const s = await CardioSession.findOne({ _id: d.session_id, patient: pid, status: "active" }).select("_id");
+        if (!s) return;
+        if (!dans(d.bpm, 20, 250) || !dans(d.stress, 0, 100) || !dans(d.rmssd, 0, 1000)) return;
+        const doc = await CardioMeasure.create({
+          session: s._id,
+          patient: pid,
+          at: new Date(),
+          bpm: d.bpm,
+          rmssd: d.rmssd,
+          sdnn: fin(d.sdnn) ? d.sdnn : null,
+          pnn50: fin(d.pnn50) ? d.pnn50 : null,
+          stress: d.stress,
+          level: ["Faible", "ModÃ©rÃ©", "Ã‰levÃ©"].includes(d.niveau) ? d.niveau : null,
+          beats: fin(d.nb_battements) ? d.nb_battements : null,
+          movement: fin(d.mouvement) ? d.mouvement : null,
+          ecg: tableau(d.ecg, 2500) ? d.ecg : [],
+        });
+        const { ecg, ...legere } = doc.toObject();
+        versPatient(pid, "measure:saved", legere);
+      } catch (e) {
+        console.error("[cardio] mesure :", e.message);
+      }
+    });
+
+    socket.on("disconnect", async () => {
+      const restants = await nsDevice.in(room).fetchSockets();
+      if (restants.length === 0) {
+        live.delete(pid);
+        versPatient(pid, "device:status", { online: false });
+      }
+    });
+  });
+
+  /* ---------- Navigateur du patient ---------- */
+  nsPatient.use((socket, next) => {
+    try {
+      const p = jwt.verify(socket.handshake.auth && socket.handshake.auth.token, process.env.JWT_SECRET);
+      const id = p.id || p._id || p.userId || p.sub;
+      if (!id) throw new Error("no id");
+      socket.data.patientId = String(id);
+      next();
+    } catch {
+      next(new Error("unauthorized"));
+    }
+  });
+
+  nsPatient.on("connection", (socket) => {
+    const pid = socket.data.patientId;
+    socket.join(`patient:${pid}`);
+    const l = live.get(pid);
+    socket.emit("device:status", { online: !!(l && l.online) });
+    if (l && l.state) socket.emit("device:state", l.state);
+    if (l && l.metrics) socket.emit("metrics", l.metrics);
+  });
+}
+
+module.exports = { initCardio, isDeviceOnline, notifySession, disconnectDevice };
+
+===== backend\src\routes\index.js =====
+
+const cardioRoutes = require("./cardio.routes");
+const express = require("express");
+const router = express.Router();
+
+router.use("/auth", require("./auth.routes"));
+router.use("/admin", require("./admin.routes"));
+router.use("/derma", require("./derma.routes"));
+router.use("/consultations", require("./consultation.routes"));
+router.use("/doctor", require("./doctor.routes"));
+router.use("/appointments", require("./appointment.routes"));
+
+router.use("/products", require("./products"));
+router.use("/orders", require("./orders"));
+router.use("/prescriptions", require("./prescriptions"));
+router.use("/cardio", cardioRoutes);
+module.exports = router;
+
+===== backend\src\middlewares\auth.middleware.js =====
+
+const jwt = require("jsonwebtoken");
+const User = require("../models/user");
+const ApiError = require("../utils/ApiError");
+
+// VÃ©rifie le token JWT et charge l'utilisateur dans req.user
+const protect = async (req, res, next) => {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith("Bearer ")) {
+    throw new ApiError(401, "Authentification requise");
+  }
+
+  let decoded;
+  try {
+    decoded = jwt.verify(header.split(" ")[1], process.env.JWT_SECRET);
+  } catch (error) {
+    throw new ApiError(401, "Token invalide ou expirÃ©");
+  }
+
+  const user = await User.findById(decoded.id);
+  if (!user || !user.estActif) {
+    throw new ApiError(401, "Compte introuvable ou suspendu");
+  }
+
+  req.user = user;
+  next();
+};
+
+module.exports = { protect };
+
+===== backend\src\app.js =====
+
+const express = require("express");
+const cors = require("cors");
+const fs = require("fs");
+const path = require("path");
+const routes = require("./routes");
+const orderCtrl = require("./controllers/orderController");
+const { notFound, errorHandler } = require("./middlewares/error.middleware");
+
+const app = express();
+
+// Dossier des images (backend/uploads/products)
+const uploadsDir = path.join(__dirname, "..", "uploads");
+fs.mkdirSync(path.join(uploadsDir, "products"), { recursive: true });
+
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
+// âš ï¸ Webhook Stripe : corps BRUT, donc AVANT express.json()
+app.post("/api/orders/webhook", express.raw({ type: "application/json" }), orderCtrl.webhook);
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Servir les images uploadÃ©es : http://localhost:5000/uploads/products/xxx.jpg
+app.use("/uploads", express.static(uploadsDir));
+
+// Route d'accueil
+app.get("/", (req, res) => {
+  res.json({
+    message: "Welcome to CardioDerma API!",
+    status: "running",
+  });
+});
+
+// VÃ©rification de l'Ã©tat de l'API
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "OK",
+    project: "CardioDerma",
+  });
+});
+
+// Routes API
+app.use("/api", routes);
+
+// Toujours en dernier
+app.use(notFound);
+app.use(errorHandler);
+
+module.exports = app;
+
+===== frontend\src\services\cardioApi.js =====
+
+import { request } from "./apiClient";
+
+export const getToken = () => localStorage.getItem("token");
+
+export const getDevice = () => request("/cardio/device");
+export const createPairing = () => request("/cardio/device/pairing", { method: "POST" });
+export const removeDevice = () => request("/cardio/device", { method: "DELETE" });
+
+export const getActiveSession = () => request("/cardio/session/active");
+export const startSession = () => request("/cardio/session/start", { method: "POST" });
+export const stopSession = () => request("/cardio/session/stop", { method: "POST" });
+
+export const getSessions = () => request("/cardio/sessions");
+export const getSession = (id) => request(`/cardio/sessions/${id}`);
+export const deleteSession = (id) => request(`/cardio/sessions/${id}`, { method: "DELETE" });
+export const getMeasureEcg = (id) => request(`/cardio/measures/${id}/ecg`);
+
+===== frontend\src\hooks\useCardioLive.js =====
+
+import { useEffect, useState } from "react";
+import { io } from "socket.io-client";
+import { getToken } from "../services/cardioApi";
+
+// Adresse du backend (sans /api)
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
+
+export default function useCardioLive() {
+  const [live, setLive] = useState({
+    socketUp: false,
+    deviceOnline: false,
+    state: null,
+    metrics: null,
+    signal: null,
+    signalAt: 0,
+    stateAt: 0,
+  });
+  const [lastMeasure, setLastMeasure] = useState(null);
+  const [sessionEvt, setSessionEvt] = useState(null);
+
+  useEffect(() => {
+    const socket = io(`${SOCKET_URL}/cardio`, { auth: { token: getToken() } });
+    const set = (patch) => setLive((s) => ({ ...s, ...patch }));
+
+    socket.on("connect", () => set({ socketUp: true }));
+    socket.on("disconnect", () => set({ socketUp: false, deviceOnline: false }));
+    socket.on("connect_error", () => set({ socketUp: false }));
+
+    socket.on("device:status", (d) =>
+      set(
+        d.online
+          ? { deviceOnline: true }
+          : { deviceOnline: false, signal: null, metrics: null, state: null }
+      )
+    );
+    socket.on("device:state", (d) => set({ state: d, stateAt: Date.now() }));
+    socket.on("signal", (d) => set({ signal: d, signalAt: Date.now() }));
+    socket.on("metrics", (d) => set({ metrics: d }));
+    socket.on("measure:saved", (m) => setLastMeasure(m));
+    socket.on("session:update", (d) => setSessionEvt({ ...d, at: Date.now() }));
+
+    return () => socket.disconnect();
+  }, []);
+
+  return { ...live, lastMeasure, sessionEvt };
+}
+
+===== frontend\src\pages\CardioSante.jsx =====
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import Navbar from "../components/Navbar";
+import useCardioLive from "../hooks/useCardioLive";
+import * as api from "../services/cardioApi";
+
+const CONSEILS = {
+  Faible: "Votre rythme cardiaque et sa variabilitÃ© Ã©voquent un Ã©tat plutÃ´t dÃ©tendu.",
+  ModÃ©rÃ©:
+    "Votre variabilitÃ© cardiaque suggÃ¨re une tension modÃ©rÃ©e. Une pause, quelques respirations lentes ou une courte marche peuvent aider.",
+  Ã‰levÃ©:
+    "Votre variabilitÃ© cardiaque est basse et/ou votre pouls Ã©levÃ©, ce qui peut accompagner un stress marquÃ©. Reposez-vous et, si cela persiste ou si vous vous sentez mal, parlez-en Ã  un professionnel de santÃ©.",
+};
+
+const fmt = (v, u = "") => (v === null || v === undefined ? "â€“" : `${v}${u}`);
+const dateTxt = (d) => new Date(d).toLocaleString("fr-FR");
+const dureeTxt = (debut, fin) => {
+  const s = Math.max(0, Math.round(((fin ? new Date(fin) : new Date()) - new Date(debut)) / 1000));
+  return `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`;
+};
+const msg = (e) => e?.message || "Erreur";
+
+/* ---------- dessin canvas : uniquement les valeurs rÃ©elles du capteur ---------- */
+function useCanvas(draw, deps) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth;
+    const h = c.clientHeight;
+    c.width = Math.round(w * dpr);
+    c.height = Math.round(h * dpr);
+    const ctx = c.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw(ctx, w, h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  return ref;
+}
+
+function fond(ctx, w, h, pas = 24) {
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = "#f3d6d3";
+  ctx.lineWidth = 0.6;
+  for (let x = 0; x <= w; x += pas) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, h);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= h; y += pas) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y);
+    ctx.stroke();
+  }
+}
+
+function texte(ctx, t) {
+  ctx.fillStyle = "#6b7a76";
+  ctx.font = "15px system-ui";
+  ctx.fillText(t, 16, 28);
+}
+
+function dessinEcg(ctx, w, h, y, pics) {
+  fond(ctx, w, h);
+  if (!y || y.length < 2) return texte(ctx, "En attente du signalâ€¦");
+  const n = y.length;
+  const moy = y.reduce((a, b) => a + b, 0) / n;
+  const sd = Math.sqrt(y.reduce((a, b) => a + (b - moy) ** 2, 0) / n);
+  let lo = Math.max(Math.min(...y), moy - 5 * sd);
+  let hi = Math.min(Math.max(...y), moy + 5 * sd);
+  if (hi - lo < 10) {
+    const c = (hi + lo) / 2;
+    lo = c - 5;
+    hi = c + 5;
+  }
+  const py = (v) => h * 0.92 - ((Math.min(Math.max(v, lo), hi) - lo) / (hi - lo)) * h * 0.84;
+  const px = (i) => (i / (n - 1)) * w;
+
+  ctx.strokeStyle = "#1b2b27";
+  ctx.lineWidth = 1.6;
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  y.forEach((v, i) => (i ? ctx.lineTo(px(i), py(v)) : ctx.moveTo(px(i), py(v))));
+  ctx.stroke();
+
+  ctx.fillStyle = "#e5484d";
+  (pics || []).forEach((i) => {
+    if (i < n) {
+      ctx.beginPath();
+      ctx.arc(px(i), py(y[i]), 4, 0, 6.2832);
+      ctx.fill();
+    }
+  });
+}
+
+function dessinCourbes(ctx, w, h, series, vide) {
+  fond(ctx, w, h, 40);
+  const n = series[0] ? series[0].vals.length : 0;
+  if (n < 2) return texte(ctx, vide);
+  series.forEach(({ vals, lo, hi, couleur }) => {
+    ctx.strokeStyle = couleur;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    vals.forEach((v, i) => {
+      const x = 12 + (i / (n - 1)) * (w - 24);
+      const vv = Math.min(Math.max(v ?? lo, lo), hi);
+      const yy = h - 12 - ((vv - lo) / (hi - lo)) * (h - 24);
+      if (i) ctx.lineTo(x, yy);
+      else ctx.moveTo(x, yy);
+    });
+    ctx.stroke();
+  });
+}
+
+const Courbes = ({ series, vide }) => {
+  const ref = useCanvas((c, w, h) => dessinCourbes(c, w, h, series, vide), [series]);
+  return <canvas ref={ref} className="block h-48 w-full rounded-xl border border-rose-100" />;
+};
+
+const serie = (liste) => [
+  { vals: liste.map((m) => m.bpm), lo: 40, hi: 140, couleur: "#1b2b27" },
+  { vals: liste.map((m) => m.stress), lo: 0, hi: 100, couleur: "#e5484d" },
+];
+
+/* ---------- petits composants d'interface ---------- */
+const Carte = ({ titre, children }) => (
+  <section className="my-4 rounded-2xl border border-brand-100 bg-white p-5 shadow-sm">
+    <h2 className="mb-3 font-heading text-lg font-bold text-brand-900">{titre}</h2>
+    {children}
+  </section>
+);
+
+const Bouton = ({ variante = "plein", className = "", ...p }) => (
+  <button
+    type="button"
+    {...p}
+    className={`rounded-full px-5 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+      variante === "plein"
+        ? "bg-brand-700 text-white hover:bg-brand-900"
+        : variante === "danger"
+        ? "bg-red-600 text-white hover:bg-red-700"
+        : "bg-brand-50 text-brand-700 hover:bg-brand-100"
+    } ${className}`}
+    {...{}}
+  />
+);
+
+const Mesure = ({ label, value }) => (
+  <div>
+    <div className="text-sm text-brand-900/60">{label}</div>
+    <div className="text-xl font-bold text-brand-900">{value}</div>
+  </div>
+);
+
+/* ---------- page ---------- */
+export default function CardioSante() {
+  const live = useCardioLive();
+  const [now, setNow] = useState(Date.now());
+  const [device, setDevice] = useState(null);
+  const [pairing, setPairing] = useState(null);
+  const [active, setActive] = useState(null);
+  const [activeMeasures, setActiveMeasures] = useState([]);
+  const [sessions, setSessions] = useState([]);
+  const [detail, setDetail] = useState(null);
+  const [ecgSel, setEcgSel] = useState(null);
+  const [erreur, setErreur] = useState("");
+  const [occupe, setOccupe] = useState(false);
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const refreshDevice = useCallback(async () => {
+    try {
+      setDevice(await api.getDevice());
+    } catch (e) {
+      setErreur(msg(e));
+    }
+  }, []);
+  const refreshActive = useCallback(async () => {
+    try {
+      const d = await api.getActiveSession();
+      setActive(d.session);
+      setActiveMeasures(d.measures || []);
+    } catch {
+      /* ignorÃ© */
+    }
+  }, []);
+  const refreshSessions = useCallback(async () => {
+    try {
+      setSessions(await api.getSessions());
+    } catch {
+      /* ignorÃ© */
+    }
+  }, []);
+
+  // Chargement initial
+  useEffect(() => {
+    refreshDevice();
+    refreshActive();
+    refreshSessions();
+  }, [refreshDevice, refreshActive, refreshSessions]);
+
+  // L'Ã©tat du dispositif change (connexion / dÃ©connexion du Pi)
+  useEffect(() => {
+    refreshDevice();
+  }, [live.deviceOnline, refreshDevice]);
+
+  // Une session dÃ©marre ou s'arrÃªte
+  useEffect(() => {
+    if (live.sessionEvt) {
+      refreshActive();
+      refreshSessions();
+    }
+  }, [live.sessionEvt, refreshActive, refreshSessions]);
+
+  // Nouvelle mesure enregistrÃ©e pendant la session
+  useEffect(() => {
+    const m = live.lastMeasure;
+    if (m && active && String(m.session) === String(active._id)) {
+      setActiveMeasures((l) => [...l, m]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live.lastMeasure]);
+
+  // Pendant l'appairage : on vÃ©rifie rÃ©guliÃ¨rement que le Pi s'est connectÃ©
+  useEffect(() => {
+    if (!pairing || device?.paired) return;
+    const id = setInterval(refreshDevice, 3000);
+    return () => clearInterval(id);
+  }, [pairing, device?.paired, refreshDevice]);
+
+  // Appairage terminÃ© : on masque le code
+  useEffect(() => {
+    if (device?.paired) setPairing(null);
+  }, [device?.paired]);
+
+  const agir = async (fn) => {
+    setErreur("");
+    setOccupe(true);
+    try {
+      await fn();
+    } catch (e) {
+      setErreur(msg(e));
+    } finally {
+      setOccupe(false);
+    }
+  };
+
+  const voirEcg = async (id) => {
+    try {
+      const d = await api.getMeasureEcg(id);
+      setEcgSel({ id, y: d.ecg });
+    } catch {
+      setEcgSel({ id, y: null });
+    }
+  };
+
+  const ouvrir = (id) =>
+    agir(async () => {
+      setEcgSel(null);
+      const d = await api.getSession(id);
+      setDetail(d);
+      if (d.measures.length) voirEcg(d.measures[d.measures.length - 1]._id);
+    });
+
+  const supprimer = (id) => {
+    if (!window.confirm("Supprimer dÃ©finitivement cette session et ses mesures ?")) return;
+    agir(async () => {
+      await api.deleteSession(id);
+      if (detail?.session._id === id) setDetail(null);
+      refreshSessions();
+    });
+  };
+
+  const refEcg = useCanvas((c, w, h) => dessinEcg(c, w, h, live.signal?.y, live.signal?.pics), [live.signal]);
+  const refEcgSel = useCanvas((c, w, h) => dessinEcg(c, w, h, ecgSel?.y, null), [ecgSel]);
+
+  /* ----- statut du dispositif ----- */
+  const signalFrais = now - live.signalAt < 3000;
+  let statut = { txt: "Aucun dispositif connectÃ©", couleur: "bg-slate-400" };
+  if (device?.paired) {
+    if (!live.socketUp) statut = { txt: "Connexion au serveur perdue, reconnexionâ€¦", couleur: "bg-red-500" };
+    else if (!live.deviceOnline) statut = { txt: "Dispositif dÃ©connectÃ©", couleur: "bg-red-500" };
+    else if (!live.state?.signal_recu || !signalFrais)
+      statut = { txt: "Dispositif connectÃ©, mais aucune donnÃ©e reÃ§ue du capteur", couleur: "bg-amber-500" };
+    else statut = { txt: "Dispositif connectÃ©, donnÃ©es reÃ§ues", couleur: "bg-emerald-500" };
+  }
+
+  const m = live.metrics;
+  const restant = pairing ? Math.max(0, Math.round((new Date(pairing.expiresAt) - now) / 1000)) : 0;
+  const peutMesurer = live.deviceOnline && live.state?.signal_recu && signalFrais;
+  const sessionsAvecMesures = sessions.filter((s) => s.count > 0);
+
+  return (
+    <div className="flex min-h-screen flex-col bg-brand-50/60">
+      <Navbar />
+
+      <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-6 text-brand-900">
+        <h1 className="font-heading text-2xl font-extrabold sm:text-3xl">Cardio-SantÃ©</h1>
+        <p className="mt-1 text-sm text-brand-900/60">
+          Suivi de votre rythme cardiaque Ã  partir de votre capteur ECG connectÃ©.
+        </p>
+
+        {erreur && (
+          <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm font-medium text-red-700">
+            {erreur}
+          </p>
+        )}
+
+        {/* A. Connexion au dispositif */}
+        <Carte titre="Mon dispositif connectÃ©">
+          <p className="mb-3 flex items-center gap-2 font-semibold">
+            <span className={`h-3 w-3 rounded-full ${statut.couleur}`} />
+            {statut.txt}
+          </p>
+
+          {device && !device.paired && (
+            <>
+              {!pairing ? (
+                <>
+                  <p className="mb-3 text-sm text-brand-900/70">
+                    GÃ©nÃ©rez un code, puis saisissez-le une seule fois sur votre Raspberry Pi.
+                  </p>
+                  <Bouton disabled={occupe} onClick={() => agir(async () => setPairing(await api.createPairing()))}>
+                    Ajouter mon dispositif
+                  </Bouton>
+                </>
+              ) : (
+                <div className="rounded-xl bg-brand-50 p-4">
+                  <p className="text-sm text-brand-900/70">Sur le Raspberry Pi, exÃ©cutez :</p>
+                  <code className="my-2 block overflow-x-auto rounded bg-white p-2 text-sm">
+                    python pont.py coupler {pairing.code}
+                  </code>
+                  <p className="text-3xl font-bold tracking-widest">{pairing.code}</p>
+                  <p className="mt-1 text-sm text-brand-900/70">
+                    {restant > 0
+                      ? `Valable encore ${Math.floor(restant / 60)} min ${String(restant % 60).padStart(2, "0")} s. En attente du dispositifâ€¦`
+                      : "Code expirÃ©."}
+                  </p>
+                  {restant === 0 && (
+                    <Bouton className="mt-2" onClick={() => agir(async () => setPairing(await api.createPairing()))}>
+                      Nouveau code
+                    </Bouton>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
+          {device?.paired && (
+            <>
+              {!live.deviceOnline && (
+                <p className="mb-3 text-sm text-brand-900/70">
+                  VÃ©rifiez que le Raspberry Pi est allumÃ©, connectÃ© au rÃ©seau et que <code>app.py</code> est lancÃ©.
+                </p>
+              )}
+              {live.state && !live.state.electrodes_ok && (
+                <p className="mb-2 text-sm font-semibold text-red-600">
+                  Ã‰lectrode dÃ©collÃ©e : recollez les trois Ã©lectrodes.
+                </p>
+              )}
+              {live.state?.simulation && (
+                <p className="mb-2 text-sm text-amber-700">
+                  Mode simulation actif sur l'appareil : le signal n'est pas rÃ©el.
+                </p>
+              )}
+
+              <div className="flex flex-wrap gap-3">
+                {!active ? (
+                  <Bouton
+                    disabled={occupe || !peutMesurer}
+                    onClick={() =>
+                      agir(async () => {
+                        await api.startSession();
+                        refreshActive();
+                      })
+                    }
+                  >
+                    DÃ©marrer une session
+                  </Bouton>
+                ) : (
+                  <Bouton
+                    variante="danger"
+                    disabled={occupe}
+                    onClick={() =>
+                      agir(async () => {
+                        await api.stopSession();
+                        refreshActive();
+                        refreshSessions();
+                      })
+                    }
+                  >
+                    ArrÃªter la session
+                  </Bouton>
+                )}
+                <Bouton
+                  variante="clair"
+                  disabled={occupe}
+                  onClick={() => {
+                    if (!window.confirm("Retirer ce dispositif de votre compte ?")) return;
+                    agir(async () => {
+                      await api.removeDevice();
+                      setPairing(null);
+                      setActive(null);
+                      refreshDevice();
+                      refreshSessions();
+                    });
+                  }}
+                >
+                  Retirer le dispositif
+                </Bouton>
+              </div>
+
+              {active && (
+                <p className="mt-3 text-sm text-brand-900/70">
+                  Session dÃ©marrÃ©e le {dateTxt(active.startedAt)} Â· {activeMeasures.length} mesure(s) enregistrÃ©e(s).
+                </p>
+              )}
+              {!active && live.deviceOnline && !peutMesurer && (
+                <p className="mt-3 text-sm text-brand-900/70">
+                  La session pourra dÃ©marrer dÃ¨s que le capteur enverra des donnÃ©es.
+                </p>
+              )}
+            </>
+          )}
+        </Carte>
+
+        {device?.paired && live.deviceOnline && (
+          <>
+            {/* B. ECG en temps rÃ©el */}
+            <Carte titre="Ã‰lectrocardiogramme en temps rÃ©el">
+              <canvas ref={refEcg} className="block h-72 w-full rounded-xl border border-rose-100" />
+              <p className="mt-2 text-xs text-brand-900/60">
+                {signalFrais
+                  ? `Signal rÃ©el du capteur Â· ${live.signal?.fs} mesures/s Â· points rouges : battements dÃ©tectÃ©s.`
+                  : "Aucun signal reÃ§u pour le moment."}
+              </p>
+              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <div className="text-sm text-brand-900/60">FrÃ©quence cardiaque</div>
+                  <div className="text-5xl font-bold">
+                    {fmt(m?.bpm)}{" "}
+                    <span className="text-base font-normal text-brand-900/60">battements/min</span>
+                  </div>
+                </div>
+                <div>
+                  <div className="text-sm text-brand-900/60">QualitÃ© du signal</div>
+                  <div className={`font-semibold ${m?.bpm_ok ? "text-emerald-700" : "text-red-600"}`}>
+                    {m?.message || "â€¦"}
+                  </div>
+                </div>
+              </div>
+            </Carte>
+
+            {/* C. Analyse du stress */}
+            <Carte titre="Niveau de stress estimÃ©">
+              {m?.stress != null ? (
+                <>
+                  <div className="text-5xl font-bold">
+                    {m.stress}{" "}
+                    <span className="text-base font-normal text-brand-900/60">/ 100 Â· {m.niveau}</span>
+                  </div>
+                  <div className="my-3 h-2.5 rounded-full bg-brand-50">
+                    <div className="h-full rounded-full bg-rose-500 transition-all" style={{ width: `${m.stress}%` }} />
+                  </div>
+                  <p>{CONSEILS[m.niveau]}</p>
+                </>
+              ) : (
+                <p className="text-brand-900/70">
+                  {m?.message || "En attenteâ€¦"} Le stress est calculÃ© aprÃ¨s au moins 30 secondes de signal propre.
+                </p>
+              )}
+
+              <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <Mesure label="RMSSD" value={fmt(m?.rmssd, " ms")} />
+                <Mesure label="SDNN" value={fmt(m?.sdnn, " ms")} />
+                <Mesure label="pNN50" value={fmt(m?.pnn50, " %")} />
+                <Mesure label="Battements analysÃ©s" value={fmt(m?.nb_battements)} />
+              </div>
+
+              {active && (
+                <>
+                  <h3 className="mb-2 mt-5 font-semibold">Ã‰volution pendant la session</h3>
+                  <Courbes
+                    series={serie(activeMeasures)}
+                    vide="Les premiers points apparaissent aprÃ¨s environ 30 secondes de signal propre."
+                  />
+                  <p className="mt-1 text-xs text-brand-900/60">
+                    Trait noir : pouls (40â€“140) Â· Trait rouge : stress (0â€“100)
+                  </p>
+                </>
+              )}
+            </Carte>
+
+            {/* D. Mouvements */}
+            <Carte titre="Mouvements (MPU6050)">
+              {m?.mpu?.dispo ? (
+                <>
+                  <p className={`font-semibold ${m.mouvement ? "text-red-600" : "text-emerald-700"}`}>
+                    {m.mouvement
+                      ? "Mouvement dÃ©tectÃ© : l'ECG peut Ãªtre perturbÃ©, aucune mesure n'est enregistrÃ©e."
+                      : "Aucun mouvement perturbateur."}
+                  </p>
+                  <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <Mesure label="AccÃ©lÃ©ration (g)" value={m.mpu.acc.join(" / ")} />
+                    <Mesure label="Rotation (Â°/s)" value={m.mpu.gyro.join(" / ")} />
+                    <Mesure label="Niveau (seuil = 1)" value={m.mpu.niveau} />
+                  </div>
+                </>
+              ) : (
+                <p className="text-brand-900/70">Capteur de mouvement non dÃ©tectÃ© sur l'appareil.</p>
+              )}
+            </Carte>
+          </>
+        )}
+
+        {/* E. Historique */}
+        <Carte titre="Historique de mes mesures">
+          {!sessions.length ? (
+            <p className="text-brand-900/70">Aucune session enregistrÃ©e.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="text-brand-900/60">
+                  <tr>
+                    <th className="py-2">Date</th>
+                    <th>DurÃ©e</th>
+                    <th>Mesures</th>
+                    <th>Pouls moy.</th>
+                    <th>Stress moy.</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {sessions.map((s) => (
+                    <tr key={s._id} className="border-t border-brand-100">
+                      <td className="py-2">{dateTxt(s.startedAt)}</td>
+                      <td>
+                        {dureeTxt(s.startedAt, s.endedAt)}
+                        {s.status === "active" && " (en cours)"}
+                      </td>
+                      <td>{s.count}</td>
+                      <td>{fmt(s.bpmAvg)}</td>
+                      <td>{fmt(s.stressAvg)}</td>
+                      <td className="space-x-2 whitespace-nowrap py-1 text-right">
+                        <Bouton variante="clair" onClick={() => ouvrir(s._id)}>
+                          Voir
+                        </Bouton>
+                        {s.status !== "active" && (
+                          <Bouton variante="clair" onClick={() => supprimer(s._id)}>
+                            Supprimer
+                          </Bouton>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {sessionsAvecMesures.length > 1 && (
+            <>
+              <h3 className="mb-2 mt-5 font-semibold">Ã‰volution au fil du temps (moyenne par session)</h3>
+              <Courbes
+                series={serie([...sessionsAvecMesures].reverse().map((s) => ({ bpm: s.bpmAvg, stress: s.stressAvg })))}
+                vide=""
+              />
+            </>
+          )}
+
+          {detail && (
+            <>
+              <h3 className="mb-2 mt-6 font-semibold">Session du {dateTxt(detail.session.startedAt)}</h3>
+              <Courbes series={serie(detail.measures)} vide="Aucune mesure valide dans cette session." />
+
+              {detail.measures.length > 0 && (
+                <>
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead className="text-brand-900/60">
+                        <tr>
+                          <th className="py-2">Heure</th>
+                          <th>Pouls</th>
+                          <th>RMSSD</th>
+                          <th>SDNN</th>
+                          <th>pNN50</th>
+                          <th>Stress</th>
+                          <th />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detail.measures.map((x) => (
+                          <tr key={x._id} className="border-t border-brand-100">
+                            <td className="py-2">{new Date(x.at).toLocaleTimeString("fr-FR")}</td>
+                            <td>{fmt(x.bpm ? Math.round(x.bpm) : null, " /min")}</td>
+                            <td>{fmt(x.rmssd, " ms")}</td>
+                            <td>{fmt(x.sdnn, " ms")}</td>
+                            <td>{fmt(x.pnn50, " %")}</td>
+                            <td>
+                              {x.stress} ({x.level})
+                            </td>
+                            <td className="text-right">
+                              <Bouton variante="clair" onClick={() => voirEcg(x._id)}>
+                                ECG
+                              </Bouton>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <h3 className="mb-2 mt-5 font-semibold">ECG enregistrÃ©</h3>
+                  <canvas ref={refEcgSel} className="block h-72 w-full rounded-xl border border-rose-100" />
+                </>
+              )}
+            </>
+          )}
+        </Carte>
+
+        <p className="text-xs text-brand-900/60">
+          Ces mesures sont indicatives et ne constituent pas un diagnostic mÃ©dical. L'indice de stress est une
+          estimation calculÃ©e Ã  partir de la variabilitÃ© de votre rythme cardiaque. En cas de malaise ou
+          d'inquiÃ©tude, consultez un professionnel de santÃ©.
+        </p>
+      </main>
+    </div>
+  );
+}

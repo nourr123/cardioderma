@@ -1,0 +1,9 @@
+flask
+numpy
+scipy
+requests
+smbus2
+spidev
+gpiozero
+python-socketio[client]
+websocket-client

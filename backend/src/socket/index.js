@@ -4,7 +4,7 @@ const User = require("../models/user");
 const service = require("../services/consultation.service");
 const { emitMessage } = require("../utils/realtime");
 const { registerCall } = require("./call");
-
+const { initCardio } = require("./cardio"); 
 const initSocket = (httpServer) => {
   const io = new Server(httpServer, {
     cors: {
@@ -12,7 +12,7 @@ const initSocket = (httpServer) => {
       credentials: true,
     },
   });
-
+ initCardio(io); 
   // Authentification : le même JWT que l'API REST
   io.use(async (socket, next) => {
     try {

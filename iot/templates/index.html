@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moniteur ECG</title>
+<style>
+  :root {
+    --papier: #FBF5F1; --grille-fine: #F1D3D0; --grille-epaisse: #E2A9A4;
+    --encre: #2A1D1C; --gris: #7A6B69; --trait: #D9C9C5;
+    --rouge: #B3261E; --vert: #2F7D5B; --ambre: #B7791F;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--papier); color: var(--encre);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font: 600 28px/1.2 Georgia, "Iowan Old Style", serif; margin: 0 0 4px; }
+  h2 { font: 600 20px/1.2 Georgia, "Iowan Old Style", serif; margin: 0 0 12px; }
+  .sous-titre { color: var(--gris); margin: 0 0 16px; }
+
+  .statut { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font-weight: 500; }
+  .pastille { width: 12px; height: 12px; border-radius: 50%; background: var(--gris); flex: none; }
+  .pastille.ok { background: var(--vert); }
+  .pastille.attente { background: var(--ambre); }
+  .pastille.erreur { background: var(--rouge); }
+
+  .courbe { border: 1px solid var(--grille-epaisse); background: #fff; }
+  canvas { display: block; width: 100%; }
+  #ecg { height: 300px; }
+  .diag { color: var(--gris); font-size: 14px; margin: 8px 0 0; }
+
+  .mesures {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+    margin-top: 28px; border-top: 2px solid var(--encre);
+  }
+  .mesure { padding: 16px 0 16px; border-bottom: 1px solid var(--trait); }
+  .mesure:nth-child(odd) { padding-right: 20px; }
+  .mesure:nth-child(even) { padding-left: 20px; border-left: 1px solid var(--trait); }
+  .etiquette { color: var(--gris); font-size: 14px; }
+  .valeur { font: 600 56px/1.1 Georgia, "Iowan Old Style", serif; font-variant-numeric: tabular-nums; }
+  .valeur small { font: 400 16px system-ui, sans-serif; color: var(--gris); margin-left: 6px; }
+  .niveau { font-weight: 600; }
+  .barre { height: 8px; background: var(--grille-fine); margin-top: 8px; }
+  .barre i { display: block; height: 100%; width: 0; background: var(--rouge); transition: width .4s; }
+
+  .detail { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--trait); grid-column: 1 / -1; }
+  .detail b { display: block; font: 600 24px Georgia, serif; font-variant-numeric: tabular-nums; }
+
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0 8px; }
+  button {
+    font: 500 16px system-ui, sans-serif; padding: 10px 18px; cursor: pointer;
+    border: 1.5px solid var(--encre); background: transparent; color: var(--encre);
+  }
+  button.principal { background: var(--encre); color: var(--papier); }
+  button.actif { background: var(--rouge); border-color: var(--rouge); color: #fff; }
+  button:focus-visible { outline: 3px solid var(--ambre); outline-offset: 2px; }
+  .note { color: var(--gris); font-size: 14px; margin: 0; }
+
+  section.historique { margin-top: 40px; }
+  #graphe { height: 200px; border: 1px solid var(--trait); background: #fff; }
+  .legende { font-size: 14px; color: var(--gris); margin: 6px 0 16px; }
+  .legende span { font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 8px 8px 8px 0; border-bottom: 1px solid var(--trait); font-size: 15px; }
+  th { color: var(--gris); font-weight: 500; }
+  .avertissement { margin-top: 40px; padding-top: 12px; border-top: 1px solid var(--trait); color: var(--gris); font-size: 14px; }
+
+  @media (max-width: 640px) {
+    .valeur { font-size: 44px; }
+    .detail { grid-template-columns: 1fr 1fr; }
+    #ecg { height: 240px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Moniteur ECG</h1>
+  <p class="sous-titre">Capteur AD8232, Raspberry Pi 4. Courbe filtrée sur les {{ fenetre }} dernières secondes.</p>
+
+  <p class="statut" aria-live="polite"><span id="pastille" class="pastille"></span><span id="message">Connexion…</span></p>
+
+  <div class="courbe"><canvas id="ecg"></canvas></div>
+  <p class="diag" id="diag">En attente du signal…</p>
+
+  <div class="mesures">
+    <div class="mesure">
+      <div class="etiquette">Fréquence cardiaque</div>
+      <div class="valeur"><span id="bpm">–</span><small>battements/min</small></div>
+    </div>
+    <div class="mesure">
+      <div class="etiquette">Niveau de stress estimé</div>
+      <div class="valeur"><span id="stress">–</span><small>/ 100</small></div>
+      <div class="niveau" id="niveau"></div>
+      <div class="barre"><i id="barre"></i></div>
+    </div>
+    <div class="detail">
+      <div><span class="etiquette">RMSSD</span><b id="rmssd">–</b><span class="etiquette">ms</span></div>
+      <div><span class="etiquette">SDNN</span><b id="sdnn">–</b><span class="etiquette">ms</span></div>
+      <div><span class="etiquette">pNN50</span><b id="pnn50">–</b><span class="etiquette">%</span></div>
+      <div><span class="etiquette">Battements analysés</span><b id="nb">–</b><span class="etiquette">sur <span id="duree">0</span> s</span></div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button id="btn-enreg" class="principal">Démarrer l’enregistrement</button>
+  </div>
+  <p class="note" id="info-enreg">Une mesure est enregistrée toutes les 30 secondes, seulement quand le signal est propre et que le stress est calculable.</p>
+
+  <section class="historique">
+    <h2>Historique</h2>
+    <canvas id="graphe"></canvas>
+    <p class="legende"><span style="color:var(--encre)">Trait noir : pouls (40 à 140)</span> · <span style="color:var(--rouge)">Trait rouge : stress (0 à 100)</span></p>
+    <table>
+      <thead><tr><th>Heure</th><th>Pouls</th><th>RMSSD</th><th>Stress</th></tr></thead>
+      <tbody id="lignes"></tbody>
+    </table>
+    <div class="actions"><button id="btn-effacer">Effacer l’historique</button></div>
+  </section>
+
+  <p class="avertissement">Ce montage est pédagogique. Il ne s’agit pas d’un dispositif médical : ne l’utilise pas pour un diagnostic. L’indice de stress est une estimation indicative, calculée à partir de la variabilité du rythme cardiaque.</p>
+</main>
+
+<script>
+const FENETRE = {{ fenetre }};
+const $ = (id) => document.getElementById(id);
+const COULEURS = { fine: "#F1D3D0", epaisse: "#E2A9A4", encre: "#2A1D1C", rouge: "#B3261E", gris: "#7A6B69" };
+
+function preparer(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w, h };
+}
+
+function grille(ctx, w, h) {
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+  const petit = (w / FENETRE) * 0.04;          // 1 mm = 0,04 s, comme le papier ECG
+  for (let k = 0, x = 0; x <= w; k++, x = k * petit) {
+    ctx.strokeStyle = k % 5 === 0 ? COULEURS.epaisse : COULEURS.fine;
+    ctx.lineWidth = k % 5 === 0 ? 1 : 0.6;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+  }
+  for (let k = 0, y = 0; y <= h; k++, y = k * petit) {
+    ctx.strokeStyle = k % 5 === 0 ? COULEURS.epaisse : COULEURS.fine;
+    ctx.lineWidth = k % 5 === 0 ? 1 : 0.6;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  }
+}
+
+function dessinerECG(y, pics) {
+  const { ctx, w, h } = preparer($("ecg"));
+  grille(ctx, w, h);
+  if (!y || y.length < 2) {
+    ctx.fillStyle = COULEURS.gris; ctx.font = "16px system-ui";
+    ctx.fillText("En attente du signal…", 16, 28); return;
+  }
+  const n = y.length;
+  const moy = y.reduce((a, b) => a + b, 0) / n;
+  const sd = Math.sqrt(y.reduce((a, b) => a + (b - moy) ** 2, 0) / n);
+  let lo = Math.max(Math.min(...y), moy - 5 * sd), hi = Math.min(Math.max(...y), moy + 5 * sd);
+  if (hi - lo < 10) { const c = (hi + lo) / 2; lo = c - 5; hi = c + 5; }
+  const py = (v) => h * 0.92 - ((Math.min(Math.max(v, lo), hi) - lo) / (hi - lo)) * h * 0.84;
+  const px = (i) => (i / (n - 1)) * w;
+
+  ctx.strokeStyle = COULEURS.encre; ctx.lineWidth = 1.6; ctx.lineJoin = "round";
+  ctx.beginPath();
+  y.forEach((v, i) => (i ? ctx.lineTo(px(i), py(v)) : ctx.moveTo(px(i), py(v))));
+  ctx.stroke();
+
+  ctx.fillStyle = COULEURS.rouge;
+  (pics || []).forEach((i) => { ctx.beginPath(); ctx.arc(px(i), py(y[i]), 4, 0, 6.2832); ctx.fill(); });
+}
+
+async function lireSignal() {
+  try {
+    const r = await (await fetch("/api/signal")).json();
+    if (!r.ok) { dessinerECG(null); return; }
+    dessinerECG(r.y, r.pics);
+    $("diag").textContent = `Mesures brutes : niveau moyen ${r.brut_moyen}, amplitude ${r.brut_amplitude} (sur 1023). Fréquence réelle : ${r.fs} mesures/s. Points rouges : battements détectés.`;
+  } catch (e) { $("message").textContent = "Serveur injoignable"; $("pastille").className = "pastille erreur"; }
+}
+
+const fmt = (v) => (v === null || v === undefined ? "–" : v);
+
+async function lireMetriques() {
+  try {
+    const m = await (await fetch("/api/metriques")).json();
+    $("bpm").textContent = fmt(m.bpm);
+    $("stress").textContent = fmt(m.stress);
+    $("niveau").textContent = m.niveau || "";
+    $("barre").style.width = (m.stress || 0) + "%";
+    $("rmssd").textContent = fmt(m.rmssd);
+    $("sdnn").textContent = fmt(m.sdnn);
+    $("pnn50").textContent = fmt(m.pnn50);
+    $("nb").textContent = m.nb_battements || "–";
+    $("duree").textContent = m.duree || 0;
+    $("message").textContent = m.message;
+    $("pastille").className = "pastille " + (m.valide ? "ok" : m.bpm_ok ? "attente" : "erreur");
+    majBouton(m.enregistrement);
+    if (m.enregistrement) {
+      $("info-enreg").textContent = m.sauvegardes
+        ? `Enregistrement actif : ${m.sauvegardes} mesure(s) enregistrée(s) depuis le démarrage.`
+        : "Enregistrement actif : en attente d’un signal propre, rien n’est encore sauvegardé.";
+      if (m.sauvegardes) lireHistorique();
+    } else {
+      $("info-enreg").textContent = "Une mesure est enregistrée toutes les 30 secondes, seulement quand le signal est propre et que le stress est calculable.";
+    }
+  } catch (e) { /* le message d'erreur est géré par lireSignal */ }
+}
+
+function majBouton(actif) {
+  const b = $("btn-enreg");
+  b.textContent = actif ? "Arrêter l’enregistrement" : "Démarrer l’enregistrement";
+  b.className = actif ? "actif" : "principal";
+  b.dataset.actif = actif ? "1" : "0";
+}
+
+$("btn-enreg").addEventListener("click", async () => {
+  const veut = $("btn-enreg").dataset.actif !== "1";
+  await fetch("/api/enregistrement", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actif: veut }) });
+  majBouton(veut);
+});
+
+$("btn-effacer").addEventListener("click", async () => {
+  if (!confirm("Effacer tout l’historique ? Cette action est définitive.")) return;
+  await fetch("/api/historique", { method: "DELETE" });
+  lireHistorique();
+});
+
+function dessinerGraphe(data) {
+  const { ctx, w, h } = preparer($("graphe"));
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+  if (data.length < 2) {
+    ctx.fillStyle = COULEURS.gris; ctx.font = "16px system-ui";
+    ctx.fillText("Pas encore assez de mesures. Lance l’enregistrement et reste immobile.", 16, 28); return;
+  }
+  const trace = (cle, lo, hi, couleur) => {
+    ctx.strokeStyle = couleur; ctx.lineWidth = 2; ctx.beginPath();
+    data.forEach((d, i) => {
+      const x = 12 + (i / (data.length - 1)) * (w - 24);
+      const v = Math.min(Math.max(d[cle], lo), hi);
+      const y = h - 12 - ((v - lo) / (hi - lo)) * (h - 24);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.stroke();
+  };
+  trace("bpm", 40, 140, COULEURS.encre);
+  trace("stress", 0, 100, COULEURS.rouge);
+}
+
+async function lireHistorique() {
+  try {
+    const data = await (await fetch("/api/historique?limite=100")).json();
+    dessinerGraphe(data);
+    $("lignes").innerHTML = data.slice(-15).reverse().map((d) =>
+      `<tr><td>${d.horodatage}</td><td>${d.bpm} /min</td><td>${d.rmssd} ms</td><td>${d.stress} (${d.niveau})</td></tr>`).join("")
+      || `<tr><td colspan="4">Aucune mesure enregistrée.</td></tr>`;
+  } catch (e) { /* on réessaiera */ }
+}
+
+setInterval(lireSignal, 400);
+setInterval(lireMetriques, 1500);
+setInterval(lireHistorique, 10000);
+window.addEventListener("resize", lireHistorique);
+lireSignal(); lireMetriques(); lireHistorique();
+</script>
+</body>
+</html>
